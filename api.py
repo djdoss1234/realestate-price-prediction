@@ -36,6 +36,7 @@ from security import (
     require_jwt,
     ADMIN_PASSWORD,
 )
+from cache import cache, cache_stats, invalidate_all
 
 
 def _load_dotenv():
@@ -621,6 +622,7 @@ def _build_features(req: PredictRequest, pipeline: dict) -> tuple[pd.DataFrame, 
     tags=["예측"],
 )
 @limiter.limit("30/minute")
+@cache("predict", ttl=3600)
 def predict(request: Request, req: PredictRequest, _auth: bool = Depends(optional_auth)) -> PredictResponse:
     """
     아파트 기본 정보를 받아 예상 매매가를 반환합니다.
@@ -668,6 +670,7 @@ def predict(request: Request, req: PredictRequest, _auth: bool = Depends(optiona
     tags=["분석"],
 )
 @limiter.limit("60/minute")
+@cache("undervalued", ttl=1800)
 def undervalued(
     request:       Request,
     region:        Optional[str]   = Query(None, example="11680",  description="시군구 코드 또는 시도 앞 2자리 (생략 시 전국)"),
@@ -906,6 +909,7 @@ def issue_token(request: Request, password: str = Query(..., description="관리
 
 @app.get("/regions", tags=["분석"], summary="전체 시군구 목록")
 @limiter.limit("60/minute")
+@cache("regions", ttl=86400)
 def get_regions(request: Request) -> list[dict]:
     """DB에 존재하는 모든 시군구 코드 + 지역명 반환"""
     with sqlite3.connect(DB_PATH) as conn:
@@ -943,4 +947,5 @@ def health(request: Request) -> dict:
                                for k in ["기준금리","대출금리","M2잔액","가계대출잔액","경기선행지수"]},
         "undervalued_loaded": _undervalued is not None,
         "undervalued_count":  len(_undervalued) if _undervalued is not None else 0,
+        "cache":              cache_stats(),
     }
