@@ -1,0 +1,31 @@
+# API 서버
+fastapi==0.136.0
+uvicorn==0.45.0
+pydantic==2.13.3
+
+# ML
+lightgbm==4.6.0
+scikit-learn==1.8.0
+pandas==3.0.2
+numpy==2.4.4
+scipy==1.17.1
+
+# 보안
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
+slowapi==0.1.9
+
+# HTTP
+requests==2.33.1
+
+# 캐시 / DB
+redis==7.4.0
+psycopg2-binary==2.9.12
+
+# Airflow (Python 3.12 권장)
+# apache-airflow==2.10.4
+# apache-airflow-providers-slack
+
+# 개발 도구 (선택)
+# shap>=0.47
+# matplotlib>=3.10
