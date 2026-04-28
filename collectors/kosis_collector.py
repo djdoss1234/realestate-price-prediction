@@ -20,7 +20,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-BASE_URL = "https://kosis.kr/openapi/Param/statisticsParamData.do"
+BASE_URL = "https://kosis.kr/openapi/statisticsData.do"
 
 # KOSIS 통계표 코드 (고정)
 STAT_CODES = {
@@ -88,22 +88,29 @@ class KosisCollector:
             log.warning("KOSIS_API_KEY 없음 — 수집 스킵")
             return []
         code = STAT_CODES[stat_key]
+        # userStatsId = apiKey/orgId/tblId/분류수/시작년도/종료년도/itmId/분류1/분류2
+        obj_cnt = sum(1 for k in code if k.startswith("objL"))
+        obj_vals = "/".join(code[f"objL{i+1}"] for i in range(obj_cnt))
+        user_stats_id = (f"{self.api_key}/{code['orgId']}/{code['tblId']}"
+                         f"/{obj_cnt}/{start_year}/{end_year}/{code['itmId']}/{obj_vals}")
         params = {
-            "method":    "getList",
-            "apiKey":    self.api_key,
-            "format":    "json",
-            "jsonVD":    "Y",
-            "startPrdDe": str(start_year),
-            "endPrdDe":   str(end_year),
-            **code,
+            "method":      "getList",
+            "apiKey":      self.api_key,
+            "format":      "json",
+            "jsonVD":      "Y",
+            "userStatsId": user_stats_id,
         }
         try:
             resp = self.session.get(BASE_URL, params=params, timeout=30)
             resp.raise_for_status()
+            text = resp.text.strip()
+            if not text:
+                log.warning("KOSIS %s 빈 응답 — API 서비스 활성화 필요 (kosis.kr → 마이페이지 → OpenAPI → 서비스신청)", stat_key)
+                return []
             data = resp.json()
             if isinstance(data, list):
                 return data
-            log.warning("KOSIS 응답 이상: %s", str(data)[:200])
+            log.warning("KOSIS %s 응답 오류: %s", stat_key, str(data)[:200])
         except Exception as e:
             log.error("KOSIS %s 수집 실패: %s", stat_key, e)
         return []
