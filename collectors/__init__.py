@@ -1,5 +1,6 @@
 """
 추가 데이터 소스 수집 모듈
+- ECOS (한국은행 거시지표)
 - KOSIS (통계청)
 - 카카오맵 POI
 - 한국부동산원 청약
@@ -7,6 +8,7 @@
 - 공시지가 (국토부)
 - 학교알리미
 """
+from .ecos_collector import EcosCollector
 from .kosis_collector import KosisCollector
 from .kakao_poi_collector import KakaoPOICollector
 from .subscription_collector import SubscriptionCollector
@@ -15,6 +17,7 @@ from .land_price_collector import LandPriceCollector
 from .school_collector import SchoolCollector
 
 __all__ = [
+    "EcosCollector",
     "KosisCollector",
     "KakaoPOICollector",
     "SubscriptionCollector",
