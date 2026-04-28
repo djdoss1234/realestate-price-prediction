@@ -1,0 +1,36 @@
+# Database
+realestate.db
+
+# API Keys
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# Model binaries (retrain locally: python realestate_ml.py)
+*.lgb
+
+# Data outputs
+*.csv
+
+# SHAP / plots
+*.png
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code internal
+.claude/

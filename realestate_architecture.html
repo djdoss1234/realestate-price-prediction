@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>부동산 가격 예측 서비스 아키텍처</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Pretendard:wght@300;400;600;700&display=swap');
+
+  :root {
+    --bg: #0a0f1a;
+    --bg2: #111827;
+    --bg3: #1a2236;
+    --border: rgba(99,179,237,0.18);
+    --blue: #63b3ed;
+    --teal: #4fd1c5;
+    --amber: #f6ad55;
+    --green: #68d391;
+    --pink: #f687b3;
+    --purple: #b794f4;
+    --text: #e2e8f0;
+    --muted: #718096;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Pretendard', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    padding: 32px 24px;
+    line-height: 1.6;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 48px;
+  }
+  .header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--blue);
+    margin-bottom: 6px;
+  }
+  .header p {
+    font-size: 13px;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+
+  .arch {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  /* Layer */
+  .layer {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .layer-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    font-size: 11px;
+    font-family: var(--mono);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+  }
+  .layer-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .layer-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+
+  /* Box */
+  .box {
+    background: var(--bg3);
+    border-radius: 8px;
+    padding: 12px 14px;
+    flex: 1;
+    min-width: 140px;
+    border: 1px solid rgba(255,255,255,0.06);
+    transition: border-color 0.2s;
+    cursor: default;
+  }
+  .box:hover { border-color: rgba(255,255,255,0.18); }
+  .box-title {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .box-icon { font-size: 14px; }
+  .box-desc {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .tag {
+    display: inline-block;
+    font-size: 9px;
+    font-family: var(--mono);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-top: 6px;
+    margin-right: 3px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+
+  /* Arrow */
+  .arrow-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+    color: var(--muted);
+    font-size: 11px;
+    font-family: var(--mono);
+  }
+  .arrow-line {
+    width: 1px;
+    height: 20px;
+    background: linear-gradient(to bottom, transparent, var(--border), transparent);
+    margin: 0 auto;
+  }
+
+  /* Color schemes */
+  .l-data .layer-header { color: var(--teal); }
+  .l-data .layer-dot { background: var(--teal); }
+  .l-data .layer-header { background: rgba(79,209,197,0.06); }
+
+  .l-pipeline .layer-header { color: var(--blue); }
+  .l-pipeline .layer-dot { background: var(--blue); }
+  .l-pipeline .layer-header { background: rgba(99,179,237,0.06); }
+
+  .l-ml .layer-header { color: var(--purple); }
+  .l-ml .layer-dot { background: var(--purple); }
+  .l-ml .layer-header { background: rgba(183,148,244,0.06); }
+
+  .l-api .layer-header { color: var(--amber); }
+  .l-api .layer-dot { background: var(--amber); }
+  .l-api .layer-header { background: rgba(246,173,85,0.06); }
+
+  .l-frontend .layer-header { color: var(--green); }
+  .l-frontend .layer-dot { background: var(--green); }
+  .l-frontend .layer-header { background: rgba(104,211,145,0.06); }
+
+  .l-infra .layer-header { color: var(--pink); }
+  .l-infra .layer-dot { background: var(--pink); }
+  .l-infra .layer-header { background: rgba(246,135,179,0.06); }
+
+  /* Tag colors */
+  .tg-teal  { background: rgba(79,209,197,0.12); color: var(--teal); }
+  .tg-blue  { background: rgba(99,179,237,0.12); color: var(--blue); }
+  .tg-purple{ background: rgba(183,148,244,0.12); color: var(--purple); }
+  .tg-amber { background: rgba(246,173,85,0.12);  color: var(--amber); }
+  .tg-green { background: rgba(104,211,145,0.12); color: var(--green); }
+  .tg-pink  { background: rgba(246,135,179,0.12); color: var(--pink); }
+  .tg-gray  { background: rgba(113,128,150,0.15); color: var(--muted); }
+
+  .section-label {
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--muted);
+    text-align: center;
+    margin: 4px 0 2px;
+    letter-spacing: 0.06em;
+  }
+
+  /* stats row */
+  .stats {
+    display: flex;
+    gap: 10px;
+    max-width: 900px;
+    margin: 16px auto 0;
+    flex-wrap: wrap;
+  }
+  .stat {
+    flex: 1;
+    min-width: 120px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    text-align: center;
+  }
+  .stat-num {
+    font-size: 22px;
+    font-weight: 700;
+    font-family: var(--mono);
+    margin-bottom: 4px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🏠 부동산 가격 예측 서비스 — 전체 아키텍처</h1>
+  <p>전국 · 전 유형 · 실제 서비스 기준 설계</p>
+</div>
+
+<div class="arch">
+
+  <!-- Layer 1: 데이터 소스 -->
+  <div class="layer l-data">
+    <div class="layer-header">
+      <div class="layer-dot"></div>
+      Layer 1 — 데이터 수집
+    </div>
+    <div class="layer-body">
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🏛️</span> 국토교통부 API</div>
+        <div class="box-desc">아파트·오피스텔·상가 실거래가<br>단지 정보, 건물 정보</div>
+        <span class="tag tg-teal">공공데이터포털</span>
+        <span class="tag tg-gray">무료</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🏦</span> 한국은행 ECOS</div>
+        <div class="box-desc">기준금리, 대출금리<br>M2 통화량, 경기선행지수</div>
+        <span class="tag tg-teal">ECOS API</span>
+        <span class="tag tg-gray">무료</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">📊</span> 통계청 KOSIS</div>
+        <div class="box-desc">인구·세대수, 고용률<br>지역별 소득 데이터</div>
+        <span class="tag tg-teal">KOSIS API</span>
+        <span class="tag tg-gray">무료</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🗺️</span> 카카오/네이버 지도</div>
+        <div class="box-desc">지하철역 거리, 학교 수<br>편의시설, POI 데이터</div>
+        <span class="tag tg-blue">Kakao API</span>
+        <span class="tag tg-gray">유료 일부</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">📰</span> 부동산 뉴스 크롤링</div>
+        <div class="box-desc">규제 이슈 감지<br>NLP 감성 점수 피처화</div>
+        <span class="tag tg-purple">Selenium</span>
+        <span class="tag tg-purple">BeautifulSoup</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-line"></div>
+
+  <!-- Layer 2: 데이터 파이프라인 -->
+  <div class="layer l-pipeline">
+    <div class="layer-header">
+      <div class="layer-dot"></div>
+      Layer 2 — 데이터 파이프라인
+    </div>
+    <div class="layer-body">
+      <div class="box">
+        <div class="box-title"><span class="box-icon">⚙️</span> 수집 스케줄러</div>
+        <div class="box-desc">매일 새벽 실거래 데이터<br>자동 수집 및 저장</div>
+        <span class="tag tg-blue">Apache Airflow</span>
+        <span class="tag tg-gray">또는 Cron</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🧹</span> 전처리 엔진</div>
+        <div class="box-desc">이상치 제거, 결측치 처리<br>피처 엔지니어링 자동화</div>
+        <span class="tag tg-blue">Pandas</span>
+        <span class="tag tg-blue">NumPy</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🗄️</span> 데이터베이스</div>
+        <div class="box-desc">원시 데이터 저장<br>피처 스토어 관리</div>
+        <span class="tag tg-blue">PostgreSQL</span>
+        <span class="tag tg-blue">Redis 캐시</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🔍</span> 피처 엔지니어링</div>
+        <div class="box-desc">rolling 평균가, 거래량<br>지역 클러스터링, 계절성</div>
+        <span class="tag tg-blue">Scikit-learn</span>
+        <span class="tag tg-blue">GeoPandas</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-line"></div>
+
+  <!-- Layer 3: ML 모델 -->
+  <div class="layer l-ml">
+    <div class="layer-header">
+      <div class="layer-dot"></div>
+      Layer 3 — ML 모델 레이어 (핵심)
+    </div>
+    <div class="layer-body">
+      <div class="box" style="border-color: rgba(183,148,244,0.3);">
+        <div class="box-title"><span class="box-icon">🥇</span> LightGBM (주력)</div>
+        <div class="box-desc">단지별 매매가 예측<br>MAE ~500만원 목표<br>학습 빠르고 해석 용이</div>
+        <span class="tag tg-purple">tabular</span>
+        <span class="tag tg-purple">SHAP 해석</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">📈</span> Prophet / LSTM</div>
+        <div class="box-desc">지역별 가격 추세 예측<br>3·6·12개월 후 가격<br>시계열 패턴 학습</div>
+        <span class="tag tg-purple">time-series</span>
+        <span class="tag tg-gray">Facebook Prophet</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🗺️</span> 공간 모델</div>
+        <div class="box-desc">위치 기반 가격 추정<br>지리적 클러스터링<br>인접 단지 영향 반영</div>
+        <span class="tag tg-purple">spatial</span>
+        <span class="tag tg-gray">GeoPandas</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🔬</span> 앙상블 & MLflow</div>
+        <div class="box-desc">모델 버전 관리<br>A/B 테스트, 성능 모니터링<br>자동 재학습 트리거</div>
+        <span class="tag tg-purple">MLflow</span>
+        <span class="tag tg-purple">Stacking</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-line"></div>
+
+  <!-- Layer 4: API 서버 -->
+  <div class="layer l-api">
+    <div class="layer-header">
+      <div class="layer-dot"></div>
+      Layer 4 — 백엔드 API 서버
+    </div>
+    <div class="layer-body">
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🚀</span> FastAPI 서버</div>
+        <div class="box-desc">REST API / WebSocket<br>비동기 예측 요청 처리<br>JWT 인증, Rate limiting</div>
+        <span class="tag tg-amber">FastAPI</span>
+        <span class="tag tg-amber">Python 3.11</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🔌</span> 주요 엔드포인트</div>
+        <div class="box-desc">
+          POST /predict — 가격 예측<br>
+          GET /trend/:region — 지역 추세<br>
+          GET /undervalued — 저평가 단지
+        </div>
+        <span class="tag tg-amber">OpenAPI</span>
+        <span class="tag tg-gray">Swagger 자동생성</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">⚡</span> 캐싱 전략</div>
+        <div class="box-desc">단지별 예측값 Redis 캐시<br>TTL 1시간 갱신<br>예측 요청 99% 캐시 히트</div>
+        <span class="tag tg-amber">Redis</span>
+        <span class="tag tg-gray">Celery 비동기</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🛡️</span> 보안 & 모니터링</div>
+        <div class="box-desc">API 키 관리, 로그 수집<br>Prometheus 메트릭<br>Grafana 대시보드</div>
+        <span class="tag tg-amber">Prometheus</span>
+        <span class="tag tg-amber">Grafana</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-line"></div>
+
+  <!-- Layer 5: 프론트엔드 -->
+  <div class="layer l-frontend">
+    <div class="layer-header">
+      <div class="layer-dot"></div>
+      Layer 5 — 프론트엔드 서비스
+    </div>
+    <div class="layer-body">
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🗺️</span> 지도 기반 UI</div>
+        <div class="box-desc">카카오맵 위에 히트맵<br>단지 클릭 → 예측가 팝업<br>저평가 단지 마커 표시</div>
+        <span class="tag tg-green">Next.js</span>
+        <span class="tag tg-green">Kakao Maps SDK</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">📊</span> 분석 대시보드</div>
+        <div class="box-desc">지역별 가격 트렌드 차트<br>금리 시나리오 시뮬레이터<br>SHAP 피처 중요도 시각화</div>
+        <span class="tag tg-green">Recharts</span>
+        <span class="tag tg-green">D3.js</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🔔</span> 알림 기능</div>
+        <div class="box-desc">관심 단지 가격 변동 알림<br>저평가 단지 발생 알림<br>이메일 / 카카오 알림</div>
+        <span class="tag tg-green">PWA</span>
+        <span class="tag tg-gray">카카오 알림톡</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">📱</span> 반응형 / 앱</div>
+        <div class="box-desc">모바일 우선 설계<br>PWA로 앱처럼 동작<br>오프라인 캐싱 지원</div>
+        <span class="tag tg-green">PWA</span>
+        <span class="tag tg-green">Tailwind CSS</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-line"></div>
+
+  <!-- Layer 6: 인프라 -->
+  <div class="layer l-infra">
+    <div class="layer-header">
+      <div class="layer-dot"></div>
+      Layer 6 — 인프라 & 배포
+    </div>
+    <div class="layer-body">
+      <div class="box">
+        <div class="box-title"><span class="box-icon">☁️</span> 클라우드</div>
+        <div class="box-desc">AWS EC2 (ML 서버)<br>RDS PostgreSQL<br>S3 모델 아티팩트 저장</div>
+        <span class="tag tg-pink">AWS</span>
+        <span class="tag tg-gray">초기 월 ~5만원</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🐳</span> 컨테이너화</div>
+        <div class="box-desc">Docker로 환경 통일<br>ML / API / DB 분리<br>로컬과 운영 환경 동일</div>
+        <span class="tag tg-pink">Docker</span>
+        <span class="tag tg-pink">Docker Compose</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">🔄</span> CI/CD</div>
+        <div class="box-desc">GitHub Actions 자동 배포<br>모델 성능 저하 감지 시<br>자동 재학습 트리거</div>
+        <span class="tag tg-pink">GitHub Actions</span>
+        <span class="tag tg-pink">MLflow</span>
+      </div>
+      <div class="box">
+        <div class="box-title"><span class="box-icon">📦</span> 수익화 옵션</div>
+        <div class="box-desc">프리미엄 구독 (상세 분석)<br>부동산 중개사 API 제공<br>데이터 리포트 판매</div>
+        <span class="tag tg-pink">SaaS 모델</span>
+        <span class="tag tg-gray">B2B API</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Stats -->
+<div class="stats">
+  <div class="stat">
+    <div class="stat-num" style="color: var(--teal);">5개</div>
+    <div class="stat-label">데이터 소스</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num" style="color: var(--purple);">3종</div>
+    <div class="stat-label">ML 모델</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num" style="color: var(--amber);">~500만</div>
+    <div class="stat-label">MAE 목표</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num" style="color: var(--green);">3~4개월</div>
+    <div class="stat-label">MVP 개발 기간</div>
+  </div>
+  <div class="stat">
+    <div class="stat-num" style="color: var(--pink);">~5만원</div>
+    <div class="stat-label">초기 월 서버비</div>
+  </div>
+</div>
+
+</body>
+</html>

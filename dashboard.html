@@ -1,0 +1,1511 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>부동산 AI 대시보드</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    /* ── 테마 변수 ── */
+    :root {
+      --bg0:      #0b0f1a;
+      --bg1:      #111827;
+      --bg2:      #1e2535;
+      --bg3:      #252d40;
+      --border:   #2d3748;
+      --accent:   #38bdf8;
+      --accent2:  #818cf8;
+      --success:  #34d399;
+      --danger:   #f87171;
+      --warn:     #fbbf24;
+      --text0:    #f1f5f9;
+      --text1:    #94a3b8;
+      --text2:    #64748b;
+      --sw: 310px;   /* sidebar width */
+      --pw: 350px;   /* panel width   */
+      --hh: 52px;    /* header height */
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; }
+
+    body {
+      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg0);
+      color: var(--text0);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── 스크롤바 ── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* ── 헤더 ── */
+    .hdr {
+      height: var(--hh);
+      background: var(--bg1);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 12px;
+      flex-shrink: 0;
+      z-index: 100;
+    }
+    .hdr-logo {
+      font-size: 18px;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      white-space: nowrap;
+    }
+    .hdr-sub {
+      font-size: 12px;
+      color: var(--text2);
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .badge {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 500;
+      border: 1px solid;
+      white-space: nowrap;
+    }
+    .badge.ok  { background: rgba(52,211,153,.1); color: var(--success); border-color: rgba(52,211,153,.25); }
+    .badge.err { background: rgba(248,113,113,.1); color: var(--danger);  border-color: rgba(248,113,113,.25); }
+    .badge-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+    .btn {
+      padding: 5px 13px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: var(--bg2);
+      color: var(--text0);
+      font-size: 12px;
+      cursor: pointer;
+      transition: border-color .15s, color .15s;
+      white-space: nowrap;
+    }
+    .btn:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-p {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #0b0f1a;
+      font-weight: 700;
+    }
+    .btn-p:hover { background: #7dd3fc; border-color: #7dd3fc; color: #0b0f1a; }
+    .btn-p:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── 카테고리 필터 버튼 ── */
+    .filter-btns { display: flex; gap: 5px; flex-wrap: wrap; }
+    .filter-btn {
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg0);
+      color: var(--text1);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .filter-btn.active { background: var(--accent); border-color: var(--accent); color: #0b0f1a; font-weight: 700; }
+
+    /* ── 거래/물건 유형 배지 ── */
+    .type-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      margin-right: 3px;
+    }
+    .type-badge.trade  { background: rgba(56,189,248,.15);  color: #38bdf8; }
+    .type-badge.jeonse { background: rgba(129,140,248,.15); color: #818cf8; }
+    .type-badge.wolse  { background: rgba(251,146,60,.15);  color: #fb923c; }
+    .type-badge.villa  { background: rgba(52,211,153,.15);  color: #34d399; }
+
+    /* ── 메인 레이아웃 ── */
+    .main {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: var(--sw) 1fr var(--pw);
+      overflow: hidden;
+    }
+
+    /* ── 사이드바 ── */
+    .sb {
+      background: var(--bg1);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 0;
+    }
+    .sb-hdr {
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .sb-title {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text2);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .form-label { font-size: 11px; color: var(--text1); margin-bottom: 4px; display: block; }
+    .form-grp   { margin-bottom: 9px; }
+    select.sel, input.inp {
+      width: 100%;
+      padding: 7px 10px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: var(--bg0);
+      color: var(--text0);
+      font-size: 12px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    select.sel:focus, input.inp:focus { border-color: var(--accent); }
+    .filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    .sb-meta {
+      padding: 6px 14px;
+      font-size: 11px;
+      color: var(--text2);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .apt-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px;
+      min-height: 0;
+    }
+    .apt-card {
+      padding: 11px 12px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      background: var(--bg0);
+      cursor: pointer;
+      transition: border-color .15s, background .15s;
+      margin-bottom: 5px;
+      position: relative;
+    }
+    .apt-card:hover  { border-color: var(--border); background: var(--bg2); }
+    .apt-card.active { border-color: var(--accent); background: rgba(56,189,248,.06); }
+    .apt-card-name   { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 40px; }
+    .apt-card-loc    { font-size: 10px; color: var(--text2); margin: 2px 0 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .apt-card-prices { display: flex; gap: 6px; align-items: baseline; margin-bottom: 5px; }
+    .ptag  { font-size: 10px; color: var(--text2); }
+    .pval  { font-size: 11px; font-weight: 600; }
+    .pact  { color: var(--text0); }
+    .ppred { color: var(--accent); }
+    .gap-bar-wrap { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+    .gap-bar      { height: 100%; background: linear-gradient(90deg,#f87171,#dc2626); border-radius: 2px; }
+    .gap-badge    { position: absolute; top: 10px; right: 10px; font-size: 12px; font-weight: 700; color: var(--danger); }
+
+    /* ── 지도 ── */
+    .map-wrap { position: relative; overflow: hidden; }
+    #kakao-map { width: 100%; height: 100%; }
+    .map-dim {
+      position: absolute;
+      inset: 0;
+      background: rgba(11,15,26,.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 10px;
+      font-size: 13px;
+      color: var(--text1);
+      z-index: 20;
+    }
+    .map-dim.hidden { display: none; }
+
+    /* ── 오른쪽 패널 ── */
+    .panel {
+      background: var(--bg1);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 0;
+    }
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .tab {
+      flex: 1;
+      padding: 13px 8px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text2);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: color .15s, border-color .15s;
+    }
+    .tab:hover  { color: var(--text1); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-pane { display: none; flex: 1; overflow-y: auto; padding: 14px; flex-direction: column; min-height: 0; }
+    .tab-pane.active { display: flex; }
+
+    /* 트렌드 */
+    .trend-apt-nm  { font-size: 14px; font-weight: 700; }
+    .trend-apt-sub { font-size: 11px; color: var(--text2); margin-bottom: 10px; }
+    .chart-box     { position: relative; height: 190px; }
+    .stat-grid     { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 10px; }
+    .stat-card     { background: var(--bg0); border-radius: 8px; padding: 9px 11px; }
+    .stat-lbl      { font-size: 9px; color: var(--text2); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 3px; }
+    .stat-val      { font-size: 13px; font-weight: 700; }
+    .empty-state   { flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 8px; color: var(--text2); font-size: 12px; text-align: center; }
+    .empty-icon    { font-size: 30px; opacity: .3; }
+
+    /* 예측 계산기 */
+    .pred-result {
+      display: none;
+      margin-top: 14px;
+      background: var(--bg0);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .pred-result.show { display: block; }
+    .pred-price       { font-size: 26px; font-weight: 800; color: var(--accent); }
+    .pred-unit        { font-size: 11px; color: var(--text2); margin-bottom: 12px; }
+    .range-label      { display: flex; justify-content: space-between; font-size: 11px; color: var(--text1); margin-bottom: 4px; }
+    .conf-bar-wrap    { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin-top: 6px; }
+    .conf-bar-fill    { height: 100%; background: linear-gradient(90deg,var(--success),#059669); border-radius: 2px; transition: width .5s; }
+    .pred-meta        { font-size: 10px; color: var(--text2); margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+    .two-col          { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    /* ── 모달 ── */
+    .modal-bg {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.7);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-bg.hidden { display: none; }
+    .modal {
+      background: var(--bg1);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 26px 28px;
+      width: 430px;
+      box-shadow: 0 24px 64px rgba(0,0,0,.6);
+    }
+    .modal-title { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+    .modal-desc  { font-size: 12px; color: var(--text1); line-height: 1.7; margin-bottom: 18px; }
+    .modal-inp {
+      width: 100%;
+      padding: 10px 13px;
+      border-radius: 9px;
+      border: 1px solid var(--border);
+      background: var(--bg0);
+      color: var(--text0);
+      font-size: 13px;
+      font-family: monospace;
+      outline: none;
+      margin-bottom: 14px;
+      transition: border-color .15s;
+    }
+    .modal-inp:focus { border-color: var(--accent); }
+    .modal-actions { display: flex; gap: 8px; }
+    .modal-step {
+      font-size: 11px;
+      color: var(--text2);
+      margin-bottom: 14px;
+      padding: 10px;
+      background: var(--bg0);
+      border-radius: 8px;
+      line-height: 1.8;
+    }
+
+    /* ── 토스트 ── */
+    .toast {
+      position: fixed;
+      bottom: 18px;
+      right: 18px;
+      padding: 9px 15px;
+      border-radius: 9px;
+      font-size: 12px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      color: var(--text0);
+      box-shadow: 0 4px 20px rgba(0,0,0,.4);
+      z-index: 2000;
+      transform: translateY(12px);
+      opacity: 0;
+      transition: transform .25s, opacity .25s;
+      pointer-events: none;
+    }
+    .toast.show            { transform: translateY(0); opacity: 1; }
+    .toast.success         { border-color: var(--success); color: var(--success); }
+    .toast.error           { border-color: var(--danger); color: var(--danger); }
+
+    /* ── 스피너 ── */
+    .spin {
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: sp .8s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes sp { to { transform: rotate(360deg); } }
+
+    /* ── 인포윈도우 (카카오맵 외부 DOM 스타일) ── */
+    .iw-wrap {
+      background: #111827;
+      border: 1px solid #2d3748;
+      border-radius: 12px;
+      padding: 13px 15px;
+      min-width: 210px;
+      font-family: -apple-system, sans-serif;
+      box-shadow: 0 8px 28px rgba(0,0,0,.6);
+    }
+    .iw-name    { font-size: 14px; font-weight: 700; color: #f1f5f9; margin-bottom: 2px; }
+    .iw-loc     { font-size: 10px; color: #64748b; margin-bottom: 9px; }
+    .iw-grid    { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 9px; }
+    .iw-cell    { background: #0b0f1a; border-radius: 7px; padding: 7px 8px; }
+    .iw-clbl    { font-size: 9px; color: #64748b; margin-bottom: 2px; }
+    .iw-cval    { font-size: 12px; font-weight: 700; }
+    .iw-act     { color: #f1f5f9; }
+    .iw-pred    { color: #38bdf8; }
+    .iw-gap-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+    .iw-gap-lbl { font-size: 11px; color: #94a3b8; }
+    .iw-gap-val { font-size: 17px; font-weight: 800; color: #f87171; }
+    .iw-btns    { display: flex; gap: 6px; }
+    .iw-btn {
+      flex: 1;
+      padding: 6px;
+      border-radius: 7px;
+      border: 1px solid #2d3748;
+      background: #1e2535;
+      color: #f1f5f9;
+      font-size: 11px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .iw-btn:hover { border-color: #38bdf8; color: #38bdf8; }
+    .iw-date { font-size: 10px; color: #475569; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+<!-- ── API 키 모달 ── -->
+<div class="modal-bg" id="key-modal">
+  <div class="modal">
+    <div class="modal-title">🗺️ 카카오맵 API 키 설정</div>
+    <div class="modal-desc">
+      카카오 개발자 콘솔에서 <strong>JavaScript 앱 키</strong>를 발급받아 입력하세요.<br>
+      키는 브라우저에 저장되어 다음 접속 시 자동으로 사용됩니다.
+    </div>
+    <div class="modal-step">
+      1. <a href="https://developers.kakao.com" target="_blank" style="color:var(--accent)">developers.kakao.com</a> 로그인<br>
+      2. 내 애플리케이션 → 앱 추가 (또는 기존 앱 선택)<br>
+      3. 앱 키 탭 → <strong>JavaScript 키</strong> 복사
+    </div>
+    <input type="text" class="modal-inp" id="key-input" placeholder="예: a1b2c3d4e5f6..." autocomplete="off">
+    <div class="modal-actions">
+      <button class="btn btn-p" style="flex:1" onclick="applyKey()">적용 &amp; 시작</button>
+      <button class="btn" style="flex:1" onclick="skipKey()">키 없이 계속</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 토스트 ── -->
+<div class="toast" id="toast"></div>
+
+<!-- ── 헤더 ── -->
+<div class="hdr">
+  <div class="hdr-logo">🏠 PropAI</div>
+  <div class="hdr-sub">부동산 AI 대시보드 · 국토부 실거래가 106만건 기반 LightGBM</div>
+  <div class="badge ok" id="srv-badge">
+    <div class="badge-dot"></div>
+    <span id="srv-txt">연결 중...</span>
+  </div>
+  <button class="btn" onclick="showKeyModal()">🔑 API 키 변경</button>
+</div>
+
+<!-- ── 메인 ── -->
+<div class="main">
+
+  <!-- 사이드바 -->
+  <div class="sb">
+    <div class="sb-hdr">
+      <div class="sb-title">저평가 단지 탐색</div>
+      <div class="form-grp">
+        <label class="form-label">지역 선택</label>
+        <div class="filter-btns" id="sido-btns" style="flex-wrap:wrap;gap:4px 4px;margin-bottom:0">
+          <button class="filter-btn active" data-sido="" onclick="onSidoClick(this)">전국</button>
+          <button class="filter-btn" data-sido="11" onclick="onSidoClick(this)">서울</button>
+          <button class="filter-btn" data-sido="26" onclick="onSidoClick(this)">부산</button>
+          <button class="filter-btn" data-sido="27" onclick="onSidoClick(this)">대구</button>
+          <button class="filter-btn" data-sido="28" onclick="onSidoClick(this)">인천</button>
+          <button class="filter-btn" data-sido="29" onclick="onSidoClick(this)">광주</button>
+          <button class="filter-btn" data-sido="30" onclick="onSidoClick(this)">대전</button>
+          <button class="filter-btn" data-sido="31" onclick="onSidoClick(this)">울산</button>
+          <button class="filter-btn" data-sido="36" onclick="onSidoClick(this)">세종</button>
+          <button class="filter-btn" data-sido="41" onclick="onSidoClick(this)">경기</button>
+          <button class="filter-btn" data-sido="42" onclick="onSidoClick(this)">강원</button>
+          <button class="filter-btn" data-sido="43" onclick="onSidoClick(this)">충북</button>
+          <button class="filter-btn" data-sido="44" onclick="onSidoClick(this)">충남</button>
+          <button class="filter-btn" data-sido="45" onclick="onSidoClick(this)">전북</button>
+          <button class="filter-btn" data-sido="46" onclick="onSidoClick(this)">전남</button>
+          <button class="filter-btn" data-sido="47" onclick="onSidoClick(this)">경북</button>
+          <button class="filter-btn" data-sido="48" onclick="onSidoClick(this)">경남</button>
+          <button class="filter-btn" data-sido="50" onclick="onSidoClick(this)">제주</button>
+        </div>
+        <select class="sel" id="region-sel" onchange="onRegionChange()" style="display:none;margin-top:6px">
+          <option value="">-- 전체 --</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <div class="form-grp">
+          <label class="form-label">괴리율 최대 (%)</label>
+          <input class="inp" type="number" id="filter-gap" value="-10" max="0" step="5" onchange="onRegionChange()">
+        </div>
+        <div class="form-grp">
+          <label class="form-label">표시 건수</label>
+          <select class="sel" id="filter-limit" onchange="onRegionChange()" style="padding:6px 8px">
+            <option value="30">30건</option>
+            <option value="50" selected>50건</option>
+            <option value="100">100건</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-grp">
+        <label class="form-label">거래유형</label>
+        <div class="filter-btns" id="deal-type-btns">
+          <button class="filter-btn active" data-val="" onclick="onFilterBtnClick('deal',this)">전체</button>
+          <button class="filter-btn" data-val="매매"   onclick="onFilterBtnClick('deal',this)">매매</button>
+          <button class="filter-btn" data-val="전세"   onclick="onFilterBtnClick('deal',this)">전세</button>
+          <button class="filter-btn" data-val="월세"   onclick="onFilterBtnClick('deal',this)">월세</button>
+        </div>
+      </div>
+      <div class="form-grp">
+        <label class="form-label">물건유형</label>
+        <div class="filter-btns" id="property-type-btns">
+          <button class="filter-btn active" data-val=""       onclick="onFilterBtnClick('prop',this)">전체</button>
+          <button class="filter-btn" data-val="아파트"         onclick="onFilterBtnClick('prop',this)">아파트</button>
+          <button class="filter-btn" data-val="연립다세대"     onclick="onFilterBtnClick('prop',this)">연립다세대</button>
+        </div>
+      </div>
+    </div>
+    <div class="sb-meta" id="list-meta">로딩 중...</div>
+    <div class="apt-list" id="apt-list">
+      <div style="text-align:center;padding:40px 20px;color:var(--text2);font-size:12px">
+        <div class="spin" style="margin:0 auto 12px"></div>
+        데이터 불러오는 중...
+      </div>
+    </div>
+  </div>
+
+  <!-- 카카오맵 -->
+  <div class="map-wrap">
+    <div id="kakao-map"></div>
+    <div class="map-dim" id="map-dim">
+      <div class="spin"></div>
+      <span id="map-dim-txt">지도를 초기화하는 중...</span>
+    </div>
+  </div>
+
+  <!-- 오른쪽 패널 -->
+  <div class="panel">
+    <div class="tabs">
+      <div class="tab active" data-tab="trend"  onclick="switchTab('trend')">📈 매매 트렌드</div>
+      <div class="tab"        data-tab="rent"   onclick="switchTab('rent')">🏠 전월세</div>
+      <div class="tab"        data-tab="predict" onclick="switchTab('predict')">🔮 예측 계산기</div>
+    </div>
+
+    <!-- 매매 트렌드 탭 -->
+    <div class="tab-pane active" id="pane-trend">
+      <div id="trend-body">
+        <div class="empty-state">
+          <div class="empty-icon">📊</div>
+          <div>단지를 선택하면<br>가격 트렌드를 볼 수 있어요</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 전월세 탭 -->
+    <div class="tab-pane" id="pane-rent">
+      <div id="rent-body">
+        <div class="empty-state">
+          <div class="empty-icon">🏠</div>
+          <div>단지를 선택하면<br>전월세 현황을 볼 수 있어요</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 예측 계산기 탭 -->
+    <div class="tab-pane" id="pane-predict">
+      <div class="form-grp">
+        <label class="form-label">아파트명</label>
+        <input class="inp" type="text" id="p-nm" placeholder="예: 래미안블레스티지">
+      </div>
+      <div class="form-grp">
+        <label class="form-label">전용면적 (㎡)</label>
+        <input class="inp" type="number" id="p-ar" placeholder="예: 113.7" step="0.01">
+      </div>
+      <div class="two-col">
+        <div class="form-grp">
+          <label class="form-label">층</label>
+          <input class="inp" type="number" id="p-fl" placeholder="예: 15">
+        </div>
+        <div class="form-grp">
+          <label class="form-label">건축연도</label>
+          <input class="inp" type="number" id="p-yr" placeholder="예: 2019">
+        </div>
+      </div>
+      <div class="form-grp">
+        <label class="form-label">시군구 코드</label>
+        <select class="sel" id="p-sgg">
+          <option value="">-- 지역 선택 --</option>
+        </select>
+      </div>
+      <div class="form-grp">
+        <label class="form-label">거래유형</label>
+        <select class="sel" id="p-deal" onchange="toggleDepositField()">
+          <option value="매매">매매</option>
+          <option value="전세">전세</option>
+          <option value="월세">월세</option>
+        </select>
+      </div>
+      <div class="form-grp" id="deposit-grp" style="display:none">
+        <label class="form-label">보증금 (만원)</label>
+        <input class="inp" type="number" id="p-deposit" placeholder="예: 5000" min="0">
+      </div>
+      <button class="btn btn-p" style="width:100%;padding:9px" id="pred-btn" onclick="runPredict()">
+        가격 예측하기
+      </button>
+
+      <div class="pred-result" id="pred-result">
+        <div style="font-size:10px;color:var(--text2);margin-bottom:3px" id="pr-label">AI 예측 매매가</div>
+        <div class="pred-price" id="pr-price">--</div>
+        <div class="pred-unit">만원</div>
+        <div class="range-label">
+          <span id="pr-lower">--</span>
+          <span style="color:var(--text2)">95% 신뢰 구간</span>
+          <span id="pr-upper">--</span>
+        </div>
+        <div class="conf-bar-wrap">
+          <div class="conf-bar-fill" id="pr-conf-bar" style="width:0%"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:4px">
+          <span style="font-size:10px;color:var(--text2)">신뢰도</span>
+          <span style="font-size:12px;font-weight:700" id="pr-conf-val">--</span>
+        </div>
+        <div class="pred-meta" id="pr-meta"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- .main -->
+
+<script>
+// ════════════════════════════════════════════════════════════════
+//  ⚙️  설정  ←  카카오 JavaScript 앱 키를 여기에 입력
+//              (또는 페이지 로드 시 팝업에서 입력)
+// ════════════════════════════════════════════════════════════════
+const KAKAO_APP_KEY = '';                  // 카카오 개발자콘솔 → 앱 → JavaScript 키
+const API_BASE      = 'http://localhost:8000';
+
+// ── 시도별 지도 중심 좌표 (sggCd 앞 2자리) ──────────────────────
+const CITY_CTR = {
+  '11': { lat:37.5665, lng:126.978,  lv:9  }, // 서울
+  '26': { lat:35.1796, lng:129.0756, lv:9  }, // 부산
+  '27': { lat:35.8714, lng:128.6014, lv:9  }, // 대구
+  '28': { lat:37.4563, lng:126.7052, lv:9  }, // 인천
+  '29': { lat:35.1595, lng:126.8526, lv:9  }, // 광주
+  '30': { lat:36.3504, lng:127.3845, lv:9  }, // 대전
+  '31': { lat:35.5384, lng:129.3114, lv:9  }, // 울산
+  '36': { lat:36.4801, lng:127.2882, lv:10 }, // 세종
+  '41': { lat:37.4138, lng:127.5183, lv:10 }, // 경기
+  '42': { lat:37.8228, lng:128.1555, lv:10 }, // 강원
+  '43': { lat:36.8002, lng:127.7004, lv:10 }, // 충북
+  '44': { lat:36.5184, lng:126.8,    lv:10 }, // 충남
+  '45': { lat:35.7175, lng:127.153,  lv:10 }, // 전북
+  '46': { lat:34.816,  lng:126.463,  lv:10 }, // 전남
+  '47': { lat:36.4919, lng:128.8889, lv:10 }, // 경북
+  '48': { lat:35.4606, lng:128.2132, lv:10 }, // 경남
+  '50': { lat:33.489,  lng:126.5,    lv:10 }, // 제주
+};
+const DEFAULT_CTR = { lat:36.5, lng:127.5, lv:13 };
+
+// ── 상태 ─────────────────────────────────────────────────────────
+let map, clusterer, infoWin;
+let kakaoReady      = false;
+let markers         = [];
+let trendChart      = null;
+let rentChart       = null;
+let geoCache        = {};
+let allApts         = [];
+let regionNames     = {};   // sggCd → region name
+let activeIdx       = -1;
+let filterDealType     = '';  // '', '매매', '전세', '월세'
+let filterPropertyType = '';  // '', '아파트', '연립다세대'
+let currentSido        = '';  // 시도 앞 2자리, '' = 전국
+
+// ════════════════════════════════════════════════════════════════
+//  초기화
+// ════════════════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', async () => {
+  checkHealth();
+  await Promise.all([loadUndervalued(), loadRegions()]);
+
+  const savedKey = localStorage.getItem('kakao_key') || KAKAO_APP_KEY;
+  if (savedKey) {
+    document.getElementById('key-modal').classList.add('hidden');
+    document.getElementById('key-input').value = savedKey;
+    initMap(savedKey);
+  } else {
+    setMapDim('카카오 API 키를 입력하면 지도가 표시됩니다');
+  }
+});
+
+// ── 서버 상태 ─────────────────────────────────────────────────
+async function checkHealth() {
+  const badge = document.getElementById('srv-badge');
+  const txt   = document.getElementById('srv-txt');
+  try {
+    const d = await fetchJSON(`${API_BASE}/health`);
+    badge.className = 'badge ok';
+    txt.textContent = `서버 연결됨 · 저평가 ${(d.undervalued_count||0).toLocaleString()}건`;
+  } catch {
+    badge.className = 'badge err';
+    txt.textContent = '서버 연결 실패 (localhost:8000)';
+  }
+}
+
+// ── 시/도 분류 ────────────────────────────────────────────────
+const SIDO = {
+  '11':'서울', '26':'부산', '27':'대구', '28':'인천',
+  '29':'광주', '30':'대전', '31':'울산', '36':'세종',
+  '41':'경기', '42':'강원', '43':'충북', '44':'충남',
+  '45':'전북', '46':'전남', '47':'경북', '48':'경남', '50':'제주',
+};
+
+// ── 전체 시군구 로드 (/regions API) ───────────────────────────
+async function loadRegions() {
+  try {
+    const data = await fetchJSON(`${API_BASE}/regions`);
+    data.forEach(r => { regionNames[r.sgg_cd] = r.name; });
+    buildDropdowns(data);
+  } catch(e) {
+    console.warn('regions 로드 실패:', e.message);
+  }
+}
+
+function buildDropdowns(regions) {
+  // p-sgg (예측기)만 optgroup으로 구성
+  const groups = {};
+  regions.forEach(r => {
+    const sido = SIDO[r.sgg_cd.slice(0,2)] || '기타';
+    if (!groups[sido]) groups[sido] = [];
+    groups[sido].push(r);
+  });
+  const sidoOrder = [...Object.values(SIDO), '기타'];
+  const sel = document.getElementById('p-sgg');
+  while (sel.options.length > 1) sel.remove(1);
+  sidoOrder.forEach(sido => {
+    if (!groups[sido]) return;
+    const og = document.createElement('optgroup');
+    og.label = sido;
+    groups[sido]
+      .sort((a,b) => a.name.localeCompare(b.name,'ko'))
+      .forEach(r => {
+        const o = document.createElement('option');
+        o.value = r.sgg_cd;
+        o.textContent = `${r.name} (${r.sgg_cd})`;
+        og.appendChild(o);
+      });
+    sel.appendChild(og);
+  });
+}
+
+// ── 저평가 데이터 로드 ─────────────────────────────────────────
+async function loadUndervalued(region='') {
+  const limit   = document.getElementById('filter-limit')?.value || 50;
+  const maxGap  = document.getElementById('filter-gap')?.value;
+  const params  = new URLSearchParams({ limit });
+  if (region)             params.set('region',        region);
+  if (filterDealType)     params.set('deal_type',     filterDealType);
+  if (filterPropertyType) params.set('property_type', filterPropertyType);
+  if (maxGap !== undefined && maxGap !== '') params.set('max_gap', maxGap);
+  try {
+    const data = await fetchJSON(`${API_BASE}/undervalued?${params}`);
+    allApts    = data;
+    renderList(data);
+  } catch(e) {
+    document.getElementById('apt-list').innerHTML =
+      `<div style="text-align:center;padding:40px;color:var(--danger);font-size:12px">
+         서버 연결 실패<br><small>${e.message}</small></div>`;
+    document.getElementById('list-meta').textContent = '데이터 없음';
+  }
+}
+
+// ── 목록 렌더링 ───────────────────────────────────────────────
+function renderList(data) {
+  const meta = document.getElementById('list-meta');
+  const list = document.getElementById('apt-list');
+
+  if (!data.length) {
+    list.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text2);font-size:12px">해당 조건의 단지 없음</div>`;
+    meta.textContent = '0건';
+    return;
+  }
+
+  meta.textContent = `${data.length}건 · 괴리율 순`;
+  list.innerHTML = data.map((apt, i) => {
+    const gapAbs   = Math.abs(apt.gap_pct);
+    const barW     = Math.min(gapAbs / 80 * 100, 100).toFixed(1);
+    const actFmt   = apt.actual_price.toLocaleString();
+    const predFmt  = apt.predicted_price.toLocaleString();
+    const dealCls  = apt.deal_type === '전세' ? 'jeonse' : apt.deal_type === '월세' ? 'wolse' : 'trade';
+    const dealBadge = `<span class="type-badge ${dealCls}">${apt.deal_type||'매매'}</span>`;
+    const propBadge = apt.property_type === '연립다세대'
+      ? `<span class="type-badge villa">연립</span>` : '';
+    const depositRow = (apt.deal_type === '월세' || apt.deal_type === '전세') && apt.deposit
+      ? `<div style="font-size:10px;color:var(--text2);margin:-3px 0 4px">보증금 ${apt.deposit.toLocaleString()}만</div>`
+      : '';
+    return `
+      <div class="apt-card" id="card-${i}" onclick="onCardClick(${i})">
+        <div class="gap-badge">${apt.gap_pct.toFixed(0)}%</div>
+        <div class="apt-card-name">${esc(apt.apt_nm)}</div>
+        <div class="apt-card-loc">${dealBadge}${propBadge}${esc(apt.region)} · ${esc(apt.umd_nm)} · ${apt.exclu_use_ar}㎡</div>
+        ${depositRow}
+        <div class="apt-card-prices">
+          <span class="ptag">실거래</span>
+          <span class="pval pact">${actFmt}만</span>
+          <span class="ptag" style="margin-left:4px">예측</span>
+          <span class="pval ppred">${predFmt}만</span>
+        </div>
+        <div class="gap-bar-wrap"><div class="gap-bar" style="width:${barW}%"></div></div>
+      </div>`;
+  }).join('');
+}
+
+// ── 카테고리 필터 버튼 클릭 ──────────────────────────────────
+function onFilterBtnClick(type, btn) {
+  const grpId = type === 'deal' ? 'deal-type-btns' : 'property-type-btns';
+  document.getElementById(grpId).querySelectorAll('.filter-btn')
+    .forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  if (type === 'deal') filterDealType     = btn.dataset.val;
+  else                 filterPropertyType = btn.dataset.val;
+  onRegionChange();
+}
+
+// ── 시도 버튼 클릭 ────────────────────────────────────────────
+function onSidoClick(btn) {
+  document.querySelectorAll('#sido-btns .filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentSido = btn.dataset.sido;
+
+  const sel = document.getElementById('region-sel');
+  sel.innerHTML = '<option value="">-- 전체 --</option>';
+  if (currentSido) {
+    // 강원 구코드(42)와 신코드(51) 모두 포함
+    const altSido = currentSido === '42' ? '51' : null;
+    Object.entries(regionNames)
+      .filter(([cd]) => cd.startsWith(currentSido) || (altSido && cd.startsWith(altSido)))
+      .sort((a, b) => a[1].localeCompare(b[1], 'ko'))
+      .forEach(([cd, name]) => {
+        const o = document.createElement('option');
+        o.value = cd; o.textContent = name;
+        sel.appendChild(o);
+      });
+    sel.style.display = 'block';
+  } else {
+    sel.style.display = 'none';
+  }
+  sel.value = '';
+  onRegionChange();
+}
+
+// ── 지역 변경 ─────────────────────────────────────────────────
+async function onRegionChange() {
+  const subRegion = document.getElementById('region-sel').value;
+  // 구/군/시 선택 시 그것 사용, 없으면 시도 prefix 사용
+  const region = subRegion || currentSido;
+  clearMarkers();
+  await loadUndervalued(region);
+
+  if (!kakaoReady || !map) return;
+
+  const sidoKey = subRegion ? subRegion.slice(0,2) : currentSido;
+  if (sidoKey) {
+    const ctr = CITY_CTR[sidoKey] || DEFAULT_CTR;
+    map.setCenter(new kakao.maps.LatLng(ctr.lat, ctr.lng));
+    map.setLevel(subRegion ? ctr.lv + 1 : ctr.lv);
+    addMarkersForList(allApts);
+  } else {
+    map.setCenter(new kakao.maps.LatLng(DEFAULT_CTR.lat, DEFAULT_CTR.lng));
+    map.setLevel(DEFAULT_CTR.lv);
+  }
+}
+
+// ── 카드 클릭 ────────────────────────────────────────────────
+function onCardClick(i) {
+  const apt = allApts[i];
+  if (!apt) return;
+
+  if (activeIdx >= 0) document.getElementById(`card-${activeIdx}`)?.classList.remove('active');
+  activeIdx = i;
+  document.getElementById(`card-${i}`)?.classList.add('active');
+
+  switchTab('trend');
+  loadTrend(apt.apt_nm, apt.exclu_use_ar);
+
+  if (kakaoReady && map) geocodeAndFocus(apt);
+}
+
+// ════════════════════════════════════════════════════════════════
+//  카카오맵
+// ════════════════════════════════════════════════════════════════
+function initMap(appKey) {
+  if (kakaoReady) return;
+  setMapDim('지도를 초기화하는 중...');
+
+  const s = document.createElement('script');
+  s.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${appKey}&libraries=services,clusterer&autoload=false`;
+  s.onload = () => {
+    kakao.maps.load(() => {
+      try {
+        kakaoReady = true;
+        const el  = document.getElementById('kakao-map');
+        map = new kakao.maps.Map(el, {
+          center: new kakao.maps.LatLng(DEFAULT_CTR.lat, DEFAULT_CTR.lng),
+          level:  DEFAULT_CTR.lv,
+        });
+        map.addControl(new kakao.maps.MapTypeControl(), kakao.maps.ControlPosition.TOPRIGHT);
+        map.addControl(new kakao.maps.ZoomControl(),    kakao.maps.ControlPosition.RIGHT);
+
+        clusterer = new kakao.maps.MarkerClusterer({
+          map,
+          averageCenter: true,
+          minLevel: 6,
+          styles: [{
+            width:'42px', height:'42px',
+            background:'rgba(220,38,38,.82)',
+            borderRadius:'50%',
+            color:'#fff', textAlign:'center',
+            lineHeight:'42px', fontSize:'13px', fontWeight:'700',
+            border:'2px solid rgba(255,255,255,.25)',
+          }],
+        });
+
+        infoWin = new kakao.maps.InfoWindow({ zIndex:1, removable:true });
+
+        document.getElementById('map-dim').classList.add('hidden');
+        showToast('지도 로드 완료', 'success');
+      } catch(e) {
+        setMapDim('❌ 지도 초기화 실패: ' + e.message);
+        console.error('Kakao map init error:', e);
+      }
+    });
+  };
+  s.onerror = (e) => {
+    console.error('Kakao script load error:', e);
+    const testUrl = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${appKey}&libraries=services,clusterer`;
+    document.getElementById('map-dim').innerHTML = `
+      <div style="text-align:center;padding:24px;max-width:380px">
+        <div style="font-size:28px;margin-bottom:8px">❌</div>
+        <div style="font-size:14px;font-weight:700;margin-bottom:12px">카카오맵 스크립트 로드 실패</div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:16px;line-height:1.8">
+          아래 링크를 클릭해서 키가 유효한지 확인하세요.<br>
+          JavaScript 코드가 보이면 정상 / 에러 페이지면 키 문제
+        </div>
+        <a href="${testUrl}" target="_blank"
+           style="display:block;padding:9px 16px;background:#1e2535;border:1px solid #38bdf8;
+                  border-radius:8px;color:#38bdf8;font-size:12px;text-decoration:none;
+                  margin-bottom:12px;word-break:break-all">
+          🔗 스크립트 URL 직접 열기
+        </a>
+        <div style="font-size:11px;color:#64748b;margin-bottom:12px">
+          카카오 콘솔 도메인 등록 확인:<br>
+          <strong style="color:#f1f5f9">http://localhost:8000</strong> 이 등록되어 있어야 합니다
+        </div>
+        <button onclick="showKeyModal()"
+                style="padding:8px 20px;border-radius:8px;border:1px solid #334155;
+                       background:#252d40;color:#f1f5f9;font-size:12px;cursor:pointer">
+          🔑 API 키 다시 입력
+        </button>
+      </div>`;
+  };
+  document.head.appendChild(s);
+}
+
+function setMapDim(txt) {
+  const d = document.getElementById('map-dim');
+  d.classList.remove('hidden');
+  document.getElementById('map-dim-txt').textContent = txt;
+  // 로딩 중일 때만 스피너 보이기
+  const spin = d.querySelector('.spin');
+  if (spin) spin.style.display = txt.includes('중') ? 'block' : 'none';
+}
+
+// ── 마커 ──────────────────────────────────────────────────────
+function clearMarkers() {
+  if (clusterer) clusterer.clear();
+  markers.forEach(m => m.setMap(null));
+  markers = [];
+  if (infoWin) infoWin.close();
+}
+
+async function addMarkersForList(data) {
+  clearMarkers();
+  const batch = data.slice(0, 30);   // 최대 30개 지오코딩
+  const newM  = [];
+
+  for (const apt of batch) {
+    const pos = await geocodeApt(apt);
+    if (!pos) continue;
+    const m = makeMarker(pos, apt);
+    newM.push(m);
+    markers.push(m);
+  }
+  if (clusterer) clusterer.addMarkers(newM);
+}
+
+function makeMarker(pos, apt) {
+  const latlng = new kakao.maps.LatLng(pos.lat, pos.lng);
+  const gapAbs = Math.abs(apt.gap_pct);
+  const col    = gapAbs>60 ? '#dc2626' : gapAbs>40 ? '#ea580c' : '#d97706';
+  const op     = (Math.min(0.45 + gapAbs/100, 1)).toFixed(2);
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="44" viewBox="0 0 36 44">
+    <ellipse cx="18" cy="41" rx="7" ry="3" fill="rgba(0,0,0,.25)"/>
+    <path d="M18 0C8 0 0 8 0 18 0 30 18 44 18 44 18 44 36 30 36 18 36 8 28 0 18 0Z" fill="${col}" opacity="${op}"/>
+    <circle cx="18" cy="17" r="10" fill="white" opacity=".92"/>
+    <text x="18" y="21" font-size="9" font-weight="700" fill="${col}" text-anchor="middle" font-family="sans-serif">${apt.gap_pct.toFixed(0)}%</text>
+  </svg>`;
+
+  const img = new kakao.maps.MarkerImage(
+    `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    new kakao.maps.Size(36, 44),
+    { offset: new kakao.maps.Point(18, 44) }
+  );
+
+  const marker = new kakao.maps.Marker({ position: latlng, image: img });
+  kakao.maps.event.addListener(marker, 'click', () => openInfoWin(marker, apt, latlng));
+  return marker;
+}
+
+function openInfoWin(marker, apt, latlng) {
+  // JSON.stringify로 문자열 안전하게 직렬화
+  const nmJ = JSON.stringify(apt.apt_nm);
+  const arJ = JSON.stringify(apt.exclu_use_ar);
+  const flJ = JSON.stringify(apt.floor);
+  const cdJ = JSON.stringify(apt.sgg_cd);
+
+  const dealCls   = apt.deal_type === '전세' ? 'jeonse' : apt.deal_type === '월세' ? 'wolse' : 'trade';
+  const iwDealBadge = `<span class="type-badge ${dealCls}" style="font-size:10px">${apt.deal_type||'매매'}</span>`;
+  const iwPropBadge = apt.property_type === '연립다세대'
+    ? `<span class="type-badge villa" style="font-size:10px">연립</span>` : '';
+
+  const content = `
+    <div class="iw-wrap">
+      <div class="iw-name">${esc(apt.apt_nm)}</div>
+      <div class="iw-loc">${iwDealBadge}${iwPropBadge}${esc(apt.region)} · ${esc(apt.umd_nm)} · ${apt.exclu_use_ar}㎡ · ${apt.floor}층</div>
+      <div class="iw-grid">
+        <div class="iw-cell">
+          <div class="iw-clbl">실거래가</div>
+          <div class="iw-cval iw-act">${apt.actual_price.toLocaleString()}만원</div>
+        </div>
+        <div class="iw-cell">
+          <div class="iw-clbl">AI 예측가</div>
+          <div class="iw-cval iw-pred">${apt.predicted_price.toLocaleString()}만원</div>
+        </div>
+      </div>
+      ${(apt.deal_type==='월세'||apt.deal_type==='전세')&&apt.deposit?`<div style="font-size:11px;color:var(--text2);margin:4px 0">보증금 ${apt.deposit.toLocaleString()}만원</div>`:''}
+      <div class="iw-gap-row">
+        <span class="iw-gap-lbl">괴리율 (저평가)</span>
+        <span class="iw-gap-val">${apt.gap_pct.toFixed(1)}%</span>
+      </div>
+      <div class="iw-btns">
+        <div class="iw-btn" onclick="iwTrend(${nmJ},${arJ})">📈 매매</div>
+        <div class="iw-btn" onclick="iwRent(${nmJ},${arJ})">🏠 전월세</div>
+        <div class="iw-btn" onclick="iwPredict(${nmJ},${arJ},${flJ},${cdJ})">🔮 예측</div>
+      </div>
+      <div class="iw-date">${apt.deal_year}년 ${apt.deal_month}월 실거래</div>
+    </div>`;
+
+  infoWin.setContent(content);
+  infoWin.open(map, marker);
+}
+
+// 인포윈도우 버튼 핸들러 (전역 필요)
+window.iwTrend   = (nm, ar)              => { infoWin.close(); loadTrend(nm, ar); switchTab('trend'); };
+window.iwRent    = (nm, ar)              => { infoWin.close(); switchTab('rent'); loadRent(nm, ar);  };
+window.iwPredict = (nm, ar, fl, cd)      => { infoWin.close(); fillPredictor(nm, ar, fl, cd); switchTab('predict'); };
+
+// ── 지오코딩 ────────────────────────────────────────────────
+function geocodeApt(apt) {
+  const key = `${apt.apt_nm}_${apt.sgg_cd}`;
+  if (geoCache[key]) return Promise.resolve(geoCache[key]);
+
+  return new Promise(resolve => {
+    if (!kakaoReady || !window.kakao?.maps?.services) { resolve(null); return; }
+
+    const ps    = new kakao.maps.services.Places();
+    const query = `${apt.region} ${apt.umd_nm} ${apt.apt_nm}`;
+
+    ps.keywordSearch(query, (res, st) => {
+      if (st === kakao.maps.services.Status.OK && res.length) {
+        const pos = { lat: parseFloat(res[0].y), lng: parseFloat(res[0].x) };
+        geoCache[key] = pos;
+        resolve(pos);
+      } else {
+        // 주소 검색으로 폴백
+        const gc = new kakao.maps.services.Geocoder();
+        gc.addressSearch(`${apt.region} ${apt.umd_nm}`, (res2, st2) => {
+          if (st2 === kakao.maps.services.Status.OK && res2.length) {
+            const pos2 = { lat: parseFloat(res2[0].y), lng: parseFloat(res2[0].x) };
+            geoCache[key] = pos2;
+            resolve(pos2);
+          } else {
+            resolve(null);
+          }
+        });
+      }
+    });
+  });
+}
+
+async function geocodeAndFocus(apt) {
+  const pos = await geocodeApt(apt);
+  if (!pos || !map) return;
+
+  const latlng = new kakao.maps.LatLng(pos.lat, pos.lng);
+  map.panTo(latlng);
+  map.setLevel(5);
+
+  // 임시 마커 (리스트에 없을 경우)
+  const tempM = makeMarker(pos, apt);
+  tempM.setMap(map);
+  openInfoWin(tempM, apt, latlng);
+
+  setTimeout(() => {
+    if (!markers.includes(tempM)) tempM.setMap(null);
+  }, 6000);
+}
+
+// ════════════════════════════════════════════════════════════════
+//  가격 트렌드 (Chart.js)
+// ════════════════════════════════════════════════════════════════
+async function loadTrend(aptNm, excluUseAr) {
+  const body = document.getElementById('trend-body');
+  body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:180px;gap:10px;color:var(--text2);font-size:12px">
+    <div class="spin"></div> 데이터 로딩 중...
+  </div>`;
+
+  if (trendChart) { trendChart.destroy(); trendChart = null; }
+
+  try {
+    const params = new URLSearchParams({ apt_nm: aptNm, exclu_use_ar: excluUseAr, months: 12 });
+    const data   = await fetchJSON(`${API_BASE}/trend?${params}`);
+    renderTrend(data);
+  } catch(e) {
+    body.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">📭</div>
+      <div>${esc(aptNm)}<br><small style="color:var(--text2)">거래 데이터 없음</small></div>
+    </div>`;
+  }
+}
+
+function renderTrend(data) {
+  const body   = document.getElementById('trend-body');
+  const pts    = data.data;
+  if (!pts?.length) {
+    body.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><div>거래 데이터 없음</div></div>`;
+    return;
+  }
+
+  const prices  = pts.map(p => p.avg_price);
+  const latest  = pts[pts.length - 1];
+  const first   = pts[0];
+  const chg     = ((latest.avg_price - first.avg_price) / first.avg_price * 100).toFixed(1);
+  const chgCol  = parseFloat(chg) >= 0 ? 'var(--danger)' : 'var(--success)';
+  const avgAll  = Math.round(prices.reduce((a,b)=>a+b,0)/prices.length);
+  const maxP    = Math.max(...prices);
+  const minP    = Math.min(...prices);
+
+  body.innerHTML = `
+    <div class="trend-apt-nm">${esc(data.apt_nm)}</div>
+    <div class="trend-apt-sub">${data.exclu_use_ar ? data.exclu_use_ar+'㎡ · ' : ''}최근 ${data.months}개월</div>
+    <div class="chart-box"><canvas id="tchart"></canvas></div>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-lbl">최근 거래가</div>
+        <div class="stat-val" style="color:var(--accent)">${latest.avg_price.toLocaleString()}만</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">기간 변화</div>
+        <div class="stat-val" style="color:${chgCol}">${parseFloat(chg)>=0?'+':''}${chg}%</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">기간 평균가</div>
+        <div class="stat-val">${avgAll.toLocaleString()}만</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">가격 범위</div>
+        <div class="stat-val" style="font-size:11px">${minP.toLocaleString()}~${maxP.toLocaleString()}</div>
+      </div>
+    </div>`;
+
+  const ctx = document.getElementById('tchart').getContext('2d');
+  trendChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: pts.map(p => `${p.year}.${String(p.month).padStart(2,'0')}`),
+      datasets: [
+        {
+          label: '평균 거래가',
+          data: pts.map(p => p.avg_price),
+          borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,.12)',
+          borderWidth: 2,
+          pointBackgroundColor: '#38bdf8',
+          pointRadius: 4,
+          pointHoverRadius: 7,
+          fill: true,
+          tension: 0.35,
+        },
+        {
+          label: '최고가',
+          data: pts.map(p => p.max_price),
+          borderColor: 'rgba(248,113,113,.45)',
+          borderWidth: 1.5,
+          borderDash: [5,4],
+          pointRadius: 0,
+          fill: false,
+          tension: 0.35,
+        },
+        {
+          label: '최저가',
+          data: pts.map(p => p.min_price),
+          borderColor: 'rgba(52,211,153,.45)',
+          borderWidth: 1.5,
+          borderDash: [5,4],
+          pointRadius: 0,
+          fill: false,
+          tension: 0.35,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          labels: { color:'#64748b', font:{ size:10 }, boxWidth:10, padding:8 },
+        },
+        tooltip: {
+          backgroundColor: '#1e2535',
+          borderColor: '#2d3748',
+          borderWidth: 1,
+          titleColor: '#f1f5f9',
+          bodyColor: '#94a3b8',
+          callbacks: {
+            label: c => ` ${c.dataset.label}: ${c.parsed.y.toLocaleString()}만원`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid:  { color:'rgba(45,55,72,.6)' },
+          ticks: { color:'#475569', font:{ size:9 } },
+        },
+        y: {
+          grid:  { color:'rgba(45,55,72,.6)' },
+          ticks: {
+            color:'#475569', font:{ size:9 },
+            callback: v => v.toLocaleString()+'만',
+          },
+        },
+      },
+    },
+  });
+}
+
+// ════════════════════════════════════════════════════════════════
+//  전월세 트렌드
+// ════════════════════════════════════════════════════════════════
+async function loadRent(aptNm, excluUseAr) {
+  const body = document.getElementById('rent-body');
+  body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:180px;gap:10px;color:var(--text2);font-size:12px">
+    <div class="spin"></div> 데이터 로딩 중...
+  </div>`;
+
+  if (rentChart) { rentChart.destroy(); rentChart = null; }
+
+  try {
+    const params = new URLSearchParams({ apt_nm: aptNm, exclu_use_ar: excluUseAr, months: 12 });
+    const data   = await fetchJSON(`${API_BASE}/rent_trend?${params}`);
+    renderRent(data);
+  } catch(e) {
+    body.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">📭</div>
+      <div>${esc(aptNm)}<br><small style="color:var(--text2)">전월세 데이터 없음</small></div>
+    </div>`;
+  }
+}
+
+function renderRent(data) {
+  const body = document.getElementById('rent-body');
+  const pts   = data.data;
+  if (!pts?.length) {
+    body.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><div>전월세 데이터 없음</div></div>`;
+    return;
+  }
+
+  const latest    = pts[pts.length - 1];
+  const deposits  = pts.map(p => p.avg_deposit);
+  const avgDep    = Math.round(deposits.reduce((a,b)=>a+b,0)/deposits.length);
+  const chg       = ((latest.avg_deposit - pts[0].avg_deposit) / pts[0].avg_deposit * 100).toFixed(1);
+  const chgCol    = parseFloat(chg) >= 0 ? 'var(--danger)' : 'var(--success)';
+  const hasWolse  = pts.some(p => p.wolse_count > 0);
+  const latestMR  = latest.avg_monthly_rent;
+
+  body.innerHTML = `
+    <div class="trend-apt-nm">${esc(data.apt_nm)}</div>
+    <div class="trend-apt-sub">${data.exclu_use_ar ? data.exclu_use_ar+'㎡ · ' : ''}최근 ${data.months}개월 전월세</div>
+    <div class="chart-box"><canvas id="rchart"></canvas></div>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-lbl">최근 전세가</div>
+        <div class="stat-val" style="color:var(--accent)">${latest.avg_deposit.toLocaleString()}만</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">보증금 변화</div>
+        <div class="stat-val" style="color:${chgCol}">${parseFloat(chg)>=0?'+':''}${chg}%</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">기간 평균 보증금</div>
+        <div class="stat-val">${avgDep.toLocaleString()}만</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">${hasWolse ? '최근 월세' : '전세 거래'}</div>
+        <div class="stat-val">${hasWolse && latestMR ? latestMR.toLocaleString()+'만' : (latest.jeonse_count+'건')}</div>
+      </div>
+    </div>`;
+
+  const ctx = document.getElementById('rchart').getContext('2d');
+  const datasets = [
+    {
+      label: '보증금 평균',
+      data: pts.map(p => p.avg_deposit),
+      borderColor: '#a78bfa',
+      backgroundColor: 'rgba(167,139,250,.12)',
+      borderWidth: 2,
+      pointBackgroundColor: '#a78bfa',
+      pointRadius: 4,
+      pointHoverRadius: 7,
+      fill: true,
+      tension: 0.35,
+      yAxisID: 'yDep',
+    },
+  ];
+  if (hasWolse) {
+    datasets.push({
+      label: '월세 평균',
+      data: pts.map(p => p.avg_monthly_rent || null),
+      borderColor: '#fb923c',
+      backgroundColor: 'rgba(251,146,60,.1)',
+      borderWidth: 2,
+      pointBackgroundColor: '#fb923c',
+      pointRadius: 4,
+      pointHoverRadius: 7,
+      fill: false,
+      tension: 0.35,
+      yAxisID: 'yMR',
+    });
+  }
+
+  const scalesOpt = {
+    x:    { grid:{ color:'rgba(45,55,72,.6)' }, ticks:{ color:'#475569', font:{ size:9 } } },
+    yDep: {
+      position: 'left',
+      grid:  { color:'rgba(45,55,72,.6)' },
+      ticks: { color:'#475569', font:{ size:9 }, callback: v => v.toLocaleString()+'만' },
+    },
+  };
+  if (hasWolse) {
+    scalesOpt.yMR = {
+      position: 'right',
+      grid: { drawOnChartArea: false },
+      ticks: { color:'#fb923c', font:{ size:9 }, callback: v => v+'만' },
+    };
+  }
+
+  rentChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: pts.map(p => `${p.year}.${String(p.month).padStart(2,'0')}`),
+      datasets,
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color:'#64748b', font:{ size:10 }, boxWidth:10, padding:8 } },
+        tooltip: {
+          backgroundColor: '#1e2535',
+          borderColor: '#2d3748',
+          borderWidth: 1,
+          titleColor: '#f1f5f9',
+          bodyColor: '#94a3b8',
+          callbacks: { label: c => ` ${c.dataset.label}: ${(c.parsed.y||0).toLocaleString()}만원` },
+        },
+      },
+      scales: scalesOpt,
+    },
+  });
+}
+
+// ════════════════════════════════════════════════════════════════
+//  예측 계산기
+// ════════════════════════════════════════════════════════════════
+function fillPredictor(nm, ar, fl, cd) {
+  document.getElementById('p-nm').value   = nm;
+  document.getElementById('p-ar').value   = ar;
+  document.getElementById('p-fl').value   = fl;
+  document.getElementById('p-sgg').value  = cd;
+}
+
+function toggleDepositField() {
+  const deal = document.getElementById('p-deal').value;
+  document.getElementById('deposit-grp').style.display = deal === '월세' ? '' : 'none';
+}
+
+async function runPredict() {
+  const nm        = document.getElementById('p-nm').value.trim();
+  const ar        = parseFloat(document.getElementById('p-ar').value);
+  const fl        = parseInt(document.getElementById('p-fl').value);
+  const yr        = parseInt(document.getElementById('p-yr').value) || 2010;
+  const cd        = document.getElementById('p-sgg').value;
+  const deal_type = document.getElementById('p-deal').value;
+
+  if (!nm || !ar || !fl || !cd) { showToast('모든 항목을 입력해주세요', 'error'); return; }
+
+  const body = { apt_nm:nm, exclu_use_ar:ar, floor:fl, sgg_cd:cd, build_year:yr, deal_type };
+  if (deal_type === '월세') {
+    const dep = parseFloat(document.getElementById('p-deposit').value);
+    if (!dep) { showToast('월세 예측에는 보증금을 입력해주세요', 'error'); return; }
+    body.deposit = dep;
+  }
+
+  const btn = document.getElementById('pred-btn');
+  btn.textContent = '예측 중...';
+  btn.disabled    = true;
+
+  const labelMap = { '매매':'AI 예측 매매가', '전세':'AI 예측 전세 보증금', '월세':'AI 예측 월세' };
+  document.getElementById('pr-label').textContent = labelMap[deal_type] || 'AI 예측가';
+
+  try {
+    const d = await fetchJSON(`${API_BASE}/predict`, {
+      method:  'POST',
+      headers: { 'Content-Type':'application/json' },
+      body:    JSON.stringify(body),
+    });
+
+    document.getElementById('pr-price').textContent     = d.predicted_price.toLocaleString();
+    document.getElementById('pr-lower').textContent     = `▼ ${d.lower_bound.toLocaleString()}만원`;
+    document.getElementById('pr-upper').textContent     = `▲ ${d.upper_bound.toLocaleString()}만원`;
+    document.getElementById('pr-conf-bar').style.width  = `${(d.confidence*100).toFixed(0)}%`;
+    document.getElementById('pr-conf-val').textContent  = `${(d.confidence*100).toFixed(1)}%`;
+    document.getElementById('pr-meta').textContent      = d.db_matched
+      ? '✅ DB 실거래 이력 매칭 (정확도 높음)'
+      : '⚠️ 이력 없음 - 중간값 대체 적용';
+
+    document.getElementById('pred-result').classList.add('show');
+    showToast('예측 완료', 'success');
+  } catch(e) {
+    showToast('예측 실패: ' + e.message, 'error');
+  } finally {
+    btn.textContent = '가격 예측하기';
+    btn.disabled    = false;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  UI 유틸
+// ════════════════════════════════════════════════════════════════
+function switchTab(id) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab===id));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id===`pane-${id}`));
+}
+
+function showKeyModal() {
+  document.getElementById('key-modal').classList.remove('hidden');
+}
+
+async function applyKey() {
+  const key = document.getElementById('key-input').value.trim();
+  if (!key) { showToast('API 키를 입력하세요', 'error'); return; }
+  localStorage.setItem('kakao_key', key);
+  document.getElementById('key-modal').classList.add('hidden');
+  if (!kakaoReady) {
+    document.getElementById('map-dim').classList.remove('hidden');
+    document.getElementById('map-dim-txt').textContent = '지도를 초기화하는 중...';
+    initMap(key);
+  } else {
+    showToast('키 저장 완료. 새로고침 후 적용됩니다.', 'success');
+  }
+}
+
+function skipKey() {
+  document.getElementById('key-modal').classList.add('hidden');
+  setMapDim('카카오 API 키를 입력하면 지도가 표시됩니다');
+}
+
+let toastTimer;
+function showToast(msg, type='') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className   = `toast show ${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// HTML 이스케이프
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// fetch + JSON 파싱
+async function fetchJSON(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+</script>
+</body>
+</html>
