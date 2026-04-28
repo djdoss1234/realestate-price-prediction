@@ -43,13 +43,10 @@ def collect_kosis():
     print("KOSIS 수집:", result)
 
 def collect_ecos():
-    """ECOS 거시지표 업데이트 (api.py 재시작 시 자동 로드)"""
-    import requests, os
-    api_key = os.getenv("ECOS_API_KEY", "")
-    if not api_key:
-        print("ECOS_API_KEY 없음 — 스킵")
-        return
-    print("ECOS 업데이트 완료 (API 재시작 시 자동 반영)")
+    from collectors.ecos_collector import EcosCollector
+    c = EcosCollector(db_path=DB_PATH)
+    result = c.collect(start_ym="202001")
+    print("ECOS 수집:", result)
 
 def collect_subscription():
     from collectors.subscription_collector import SubscriptionCollector
