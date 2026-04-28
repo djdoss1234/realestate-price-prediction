@@ -8,6 +8,7 @@
   python realestate_ml.py  ← pipeline.pkl, undervalued_full.csv 생성
 """
 
+import contextlib
 import os
 import pickle
 import sqlite3
@@ -51,8 +52,35 @@ def _load_dotenv():
 
 _load_dotenv()
 
+# ── DB 연결 헬퍼 ─────────────────────────────────────────────
+# DATABASE_URL 환경변수가 있으면 PostgreSQL, 없으면 SQLite 폴백
+_DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+
+@contextlib.contextmanager
+def get_db_conn():
+    """PostgreSQL(psycopg2) 또는 SQLite 연결을 컨텍스트 매니저로 반환."""
+    if _DATABASE_URL:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(_DATABASE_URL)
+            try:
+                yield conn
+                conn.commit()
+            finally:
+                conn.close()
+            return
+        except ImportError:
+            pass  # psycopg2 없으면 SQLite 폴백
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 # ── 상수 ─────────────────────────────────────────────────────
-DB_PATH               = "realestate.db"
+DB_PATH               = os.getenv("REALESTATE_DB", "realestate.db")
 PIPELINE_PATH         = "pipeline.pkl"
 PIPELINE_TRADE_PATH   = "pipeline_trade.pkl"
 PIPELINE_JEONSE_PATH  = "pipeline_jeonse.pkl"
@@ -492,7 +520,7 @@ def _build_features(req: PredictRequest, pipeline: dict) -> tuple[pd.DataFrame, 
     ar_lo, ar_hi = req.exclu_use_ar - 5, req.exclu_use_ar + 5
 
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_conn() as conn:
 
             if deal_type == "매매":
                 # ── 단지 매매 rolling ──────────────────────────
@@ -796,7 +824,7 @@ def trend(
     area_params = area_params_base * 3 + [months]
 
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_conn() as conn:
             rows = conn.execute(query, area_params).fetchall()
     except Exception as e:
         raise HTTPException(500, f"DB 오류: {e}")
@@ -860,7 +888,7 @@ def rent_trend(
     area_params.append(months)
 
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_conn() as conn:
             rows = conn.execute(query, area_params).fetchall()
     except Exception as e:
         raise HTTPException(500, f"DB 오류: {e}")
@@ -912,7 +940,7 @@ def issue_token(request: Request, password: str = Query(..., description="관리
 @cache("regions", ttl=86400)
 def get_regions(request: Request) -> list[dict]:
     """DB에 존재하는 모든 시군구 코드 + 지역명 반환"""
-    with sqlite3.connect(DB_PATH) as conn:
+    with get_db_conn() as conn:
         rows = conn.execute(
             "SELECT DISTINCT sggCd FROM apt_trade WHERE sggCd IS NOT NULL ORDER BY sggCd"
         ).fetchall()

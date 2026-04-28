@@ -365,6 +365,22 @@ CREATE TABLE IF NOT EXISTS collection_log (
 );
 
 
+-- ── ECOS 거시지표 ────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS ecos_macro (
+    ym                       TEXT    PRIMARY KEY,
+    base_rate                REAL,
+    mortgage_rate            REAL,
+    m2_trillion              REAL,
+    m2_growth_3m             REAL,
+    leading_index            REAL,
+    household_loan_trillion  REAL,
+    rate_chg_3m              REAL,
+    rate_chg_6m              REAL,
+    collected_at             TIMESTAMPTZ DEFAULT NOW()
+);
+
+
 -- ── KOSIS 거시통계 ────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS kosis_population (
