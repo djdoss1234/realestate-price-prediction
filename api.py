@@ -19,10 +19,23 @@ from typing import List, Optional
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
+from security import (
+    access_log_middleware,
+    create_access_token,
+    limiter,
+    optional_auth,
+    require_api_key,
+    require_jwt,
+    ADMIN_PASSWORD,
+)
 
 
 def _load_dotenv():
@@ -174,16 +187,28 @@ SGG_NAMES: dict[str, str] = {
 app = FastAPI(
     title="부동산 가격 예측 API",
     description="국토부 실거래가 106만건 기반 LightGBM 예측 모델",
-    version="1.0.0",
+    version="1.1.0",
 )
+
+# Rate Limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+# CORS — 허용 도메인을 환경변수로 관리 (기본: localhost 개발환경)
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
+
+# 접근 로그 미들웨어
+app.middleware("http")(access_log_middleware)
 
 # ── 전역 상태 ─────────────────────────────────────────────────
 _pipeline:        Optional[dict]         = None   # 하위호환 (매매)
@@ -595,7 +620,8 @@ def _build_features(req: PredictRequest, pipeline: dict) -> tuple[pd.DataFrame, 
     summary="아파트 가격 예측",
     tags=["예측"],
 )
-def predict(req: PredictRequest) -> PredictResponse:
+@limiter.limit("30/minute")
+def predict(request: Request, req: PredictRequest, _auth: bool = Depends(optional_auth)) -> PredictResponse:
     """
     아파트 기본 정보를 받아 예상 매매가를 반환합니다.
 
@@ -641,12 +667,15 @@ def predict(req: PredictRequest) -> PredictResponse:
     summary="저평가 단지 목록",
     tags=["분석"],
 )
+@limiter.limit("60/minute")
 def undervalued(
+    request:       Request,
     region:        Optional[str]   = Query(None, example="11680",  description="시군구 코드 또는 시도 앞 2자리 (생략 시 전국)"),
     deal_type:     Optional[str]   = Query(None, example="매매",   description="거래유형 필터 (매매/전세/월세)"),
     property_type: Optional[str]   = Query(None, example="아파트", description="물건유형 필터 (아파트/연립다세대)"),
     max_gap:       Optional[float] = Query(None, example=-10,      description="괴리율 상한 (예: -10 → -10% 이하만)"),
     limit:         int             = Query(20,   ge=1, le=200,     description="반환 건수"),
+    _auth:         bool            = Depends(optional_auth),
 ) -> List[UndervaluedItem]:
     if _undervalued is None or _undervalued.empty:
         raise HTTPException(404, "저평가 데이터 없음. python realestate_ml.py 실행 후 재시작하세요.")
@@ -716,10 +745,13 @@ def undervalued(
     summary="아파트 실거래가 추이",
     tags=["분석"],
 )
+@limiter.limit("60/minute")
 def trend(
+    request:      Request,
     apt_nm:       str            = Query(...,  example="래미안블레스티지", description="아파트명 (부분 일치)"),
     exclu_use_ar: Optional[float]= Query(None, example=113.7,            description="전용면적 ±5㎡ 필터 (생략 시 전체)"),
     months:       int            = Query(12,   ge=1, le=36,              description="조회 개월 수"),
+    _auth:        bool           = Depends(optional_auth),
 ) -> TrendResponse:
     """
     최근 N개월 실거래가 월별 추이를 반환합니다.
@@ -794,10 +826,13 @@ def trend(
     summary="전월세 보증금·월세 추이",
     tags=["분석"],
 )
+@limiter.limit("60/minute")
 def rent_trend(
+    request:      Request,
     apt_nm:       str            = Query(...,  example="래미안블레스티지", description="아파트명 (부분 일치)"),
     exclu_use_ar: Optional[float]= Query(None, example=113.7,            description="전용면적 ±5㎡ 필터"),
     months:       int            = Query(12,   ge=1, le=36,              description="조회 개월 수"),
+    _auth:        bool           = Depends(optional_auth),
 ) -> RentTrendResponse:
     area_params: list = [f"%{apt_nm}%"]
     area_sql = ""
@@ -854,8 +889,24 @@ def dashboard():
     return FileResponse("dashboard.html", media_type="text/html")
 
 
+@app.post("/token", tags=["인증"], summary="JWT 액세스 토큰 발급")
+@limiter.limit("5/minute")
+def issue_token(request: Request, password: str = Query(..., description="관리자 비밀번호")):
+    """
+    올바른 비밀번호 입력 시 JWT 토큰 반환.
+    발급된 토큰을 Authorization: Bearer <token> 헤더로 사용.
+    """
+    if not ADMIN_PASSWORD:
+        raise HTTPException(503, "ADMIN_PASSWORD 환경변수가 설정되지 않았습니다.")
+    if password != ADMIN_PASSWORD:
+        raise HTTPException(401, "비밀번호가 올바르지 않습니다.")
+    token = create_access_token(subject="admin")
+    return {"access_token": token, "token_type": "bearer"}
+
+
 @app.get("/regions", tags=["분석"], summary="전체 시군구 목록")
-def get_regions() -> list[dict]:
+@limiter.limit("60/minute")
+def get_regions(request: Request) -> list[dict]:
     """DB에 존재하는 모든 시군구 코드 + 지역명 반환"""
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
@@ -871,7 +922,8 @@ def get_regions() -> list[dict]:
 
 
 @app.get("/health", tags=["시스템"])
-def health() -> dict:
+@limiter.limit("30/minute")
+def health(request: Request) -> dict:
     """서버 상태 확인"""
     def _pl_info(pl):
         if pl is None:
