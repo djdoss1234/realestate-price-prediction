@@ -86,9 +86,20 @@ def collect_unsold():
 def collect_building_registry():
     from collectors.building_registry_collector import BuildingRegistryCollector
     c = BuildingRegistryCollector(db_path=DB_PATH)
-    # 거래 DB의 (sggCd, umdCd) 쌍 기반 자동 수집
     result = c.collect_all()
     print("건축물대장 수집:", result)
+
+def collect_academy():
+    from collectors.academy_collector import AcademyCollector
+    c = AcademyCollector(db_path=DB_PATH)
+    result = c.collect_all()
+    print("학원 수집:", result)
+
+def collect_seoul_population():
+    from collectors.seoul_population_collector import SeoulPopulationCollector
+    c = SeoulPopulationCollector(db_path=DB_PATH)
+    result = c.collect_latest()
+    print("서울 생활인구 수집:", result)
 
 
 def notify_success(context):
@@ -159,5 +170,18 @@ with DAG(
         execution_timeout=timedelta(hours=4),
     )
 
+    t_academy = PythonOperator(
+        task_id="collect_academy",
+        python_callable=collect_academy,
+        execution_timeout=timedelta(hours=2),
+    )
+
+    t_seoul_pop = PythonOperator(
+        task_id="collect_seoul_population",
+        python_callable=collect_seoul_population,
+        execution_timeout=timedelta(hours=1),
+    )
+
     # 독립 병렬 수집
-    [t_kosis, t_ecos, t_sub, t_weather, t_land_price, t_school, t_unsold, t_bldg]
+    [t_kosis, t_ecos, t_sub, t_weather, t_land_price, t_school,
+     t_unsold, t_bldg, t_academy, t_seoul_pop]

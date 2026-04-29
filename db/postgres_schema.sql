@@ -396,6 +396,9 @@ CREATE TABLE IF NOT EXISTS ecos_macro (
     household_loan_trillion  REAL,
     rate_chg_3m              REAL,
     rate_chg_6m              REAL,
+    cpi                      REAL,
+    cpi_growth_12m           REAL,
+    ccsi                     REAL,
     collected_at             TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -429,6 +432,62 @@ CREATE TABLE IF NOT EXISTS building_registry (
 
 CREATE INDEX IF NOT EXISTS idx_bldg_sigungu ON building_registry (sigungu_cd);
 CREATE INDEX IF NOT EXISTS idx_bldg_year    ON building_registry (build_year);
+
+
+-- ── 학원정보 (NEIS) ───────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS academy_info (
+    aca_asnum      TEXT    PRIMARY KEY,
+    atpt_code      TEXT,
+    sido_nm        TEXT,
+    sgg_nm         TEXT,
+    aca_nm         TEXT,
+    aca_type       TEXT,
+    status         TEXT,
+    realm_nm       TEXT,
+    le_ord_nm      TEXT,
+    addr           TEXT,
+    estbl_ymd      TEXT,
+    total_capacity INTEGER,
+    collected_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_aca_sgg   ON academy_info (sgg_nm);
+CREATE INDEX IF NOT EXISTS idx_aca_realm ON academy_info (realm_nm);
+
+CREATE TABLE IF NOT EXISTS academy_stats (
+    sgg_nm         TEXT    PRIMARY KEY,
+    sido_nm        TEXT,
+    total_cnt      INTEGER,
+    entrance_cnt   INTEGER,
+    arts_cnt       INTEGER,
+    lang_cnt       INTEGER,
+    math_cnt       INTEGER,
+    science_cnt    INTEGER,
+    updated_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+
+-- ── 서울시 생활인구 ────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS seoul_living_pop (
+    dong_cd        TEXT    NOT NULL,
+    std_date       TEXT    NOT NULL,
+    tot_pop        NUMERIC,
+    pop_0_9        NUMERIC,
+    pop_10_19      NUMERIC,
+    pop_20_29      NUMERIC,
+    pop_30_39      NUMERIC,
+    pop_40_49      NUMERIC,
+    pop_50_59      NUMERIC,
+    pop_60_plus    NUMERIC,
+    ratio_30_49    NUMERIC,
+    ratio_young    NUMERIC,
+    collected_at   TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (dong_cd, std_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_seoulpop_dong ON seoul_living_pop (dong_cd);
 
 
 -- ── KOSIS 거시통계 ────────────────────────────────────────────

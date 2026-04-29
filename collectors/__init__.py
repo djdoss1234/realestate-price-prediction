@@ -1,14 +1,17 @@
 """
 추가 데이터 소스 수집 모듈
-- ECOS (한국은행 거시지표)
+- ECOS (한국은행 거시지표 + CPI + CCSI)
 - KOSIS (통계청)
 - 카카오맵 POI
 - 한국부동산원 청약
 - 기상청
 - 공시지가 (국토부)
-- 학교알리미
+- 학교알리미 (NEIS)
+- 학원정보 (NEIS)
+- 서울시 생활인구
 - 미분양주택현황 (국토부)
 - 건축물대장 (국토부)
+- 공동주택단지 (국토부)
 """
 from .ecos_collector import EcosCollector
 from .unsold_house_collector import UnsoldHouseCollector
@@ -20,6 +23,8 @@ from .land_price_collector import LandPriceCollector
 from .school_collector import SchoolCollector
 from .building_registry_collector import BuildingRegistryCollector
 from .apartment_complex_collector import ApartmentComplexCollector
+from .academy_collector import AcademyCollector
+from .seoul_population_collector import SeoulPopulationCollector
 
 __all__ = [
     "EcosCollector",
@@ -32,4 +37,6 @@ __all__ = [
     "SchoolCollector",
     "BuildingRegistryCollector",
     "ApartmentComplexCollector",
+    "AcademyCollector",
+    "SeoulPopulationCollector",
 ]

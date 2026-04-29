@@ -2,11 +2,13 @@
 한국은행 ECOS 거시지표 수집기
 ================================
 수집 항목:
-  - 기준금리          (722Y001 / 0101000)   → ecos_base_rate
-  - 주택담보대출금리  (121Y006 / BECBLA0302) → ecos_mortgage_rate
-  - M2 통화량         (161Y006 / BBHA00)     → ecos_money_supply
-  - 경기선행지수      (901Y067 / I16A)       → ecos_leading_index
-  - 가계대출잔액 (분기)(151Y001 / 1100000)  → ecos_household_loan
+  - 기준금리          (722Y001 / 0101000)   → base_rate
+  - 주택담보대출금리  (121Y006 / BECBLA0302) → mortgage_rate
+  - M2 통화량         (161Y006 / BBHA00)     → m2_trillion
+  - 경기선행지수      (901Y067 / I16A)       → leading_index
+  - 가계대출잔액 (분기)(151Y001 / 1100000)  → household_loan_trillion
+  - 소비자물가지수CPI (901Y009 / 0)         → cpi
+  - 소비자심리지수CCSI(511Y002 / FME)       → ccsi
 
 API: https://ecos.bok.or.kr (한국은행 경제통계시스템)
 키 발급: https://ecos.bok.or.kr/#/ApiKeyInfo/BasicInfo
@@ -44,9 +46,18 @@ CREATE TABLE IF NOT EXISTS ecos_macro (
     household_loan_trillion REAL,    -- 가계대출잔액 (조원, 분기 forward-fill)
     rate_chg_3m  REAL,               -- 기준금리 3개월 변화
     rate_chg_6m  REAL,               -- 기준금리 6개월 변화
+    cpi          REAL,               -- 소비자물가지수 (2020=100)
+    cpi_growth_12m REAL,             -- CPI 전년동월 대비 상승률 (%)
+    ccsi         REAL,               -- 소비자심리지수 (CCSI)
     collected_at TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (ym)
 )"""
+
+ALTER_SQLS = [
+    "ALTER TABLE ecos_macro ADD COLUMN cpi REAL",
+    "ALTER TABLE ecos_macro ADD COLUMN cpi_growth_12m REAL",
+    "ALTER TABLE ecos_macro ADD COLUMN ccsi REAL",
+]
 
 
 class EcosCollector:
@@ -59,6 +70,11 @@ class EcosCollector:
     def _init_table(self):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(DDL)
+            for sql in ALTER_SQLS:
+                try:
+                    conn.execute(sql)
+                except Exception:
+                    pass  # 이미 컬럼 존재
 
     def _fetch(self, stat: str, item: str, freq: str, start: str, end: str) -> dict[str, float]:
         if not self.api_key:
@@ -89,6 +105,8 @@ class EcosCollector:
         mort  = self._fetch("121Y006", "BECBLA0302", "M", start_ym, end_ym)
         m2    = self._fetch("161Y006", "BBHA00",     "M", start_ym, end_ym)
         lead  = self._fetch("901Y067", "I16A",       "M", start_ym, end_ym)
+        cpi   = self._fetch("901Y009", "0",          "M", start_ym, end_ym)
+        ccsi  = self._fetch("511Y002", "FME",        "M", start_ym, end_ym)
 
         # 분기 데이터 → 분기 시작월로 키 변환
         q2m  = {"Q1": "01", "Q2": "04", "Q3": "07", "Q4": "10"}
@@ -142,23 +160,33 @@ class EcosCollector:
                 "household_loan_trillion": last_loan,
                 "rate_chg_3m":     b3,
                 "rate_chg_6m":     b6,
+                "cpi":             cpi.get(ym),
+                "cpi_growth_12m":  None,   # 아래에서 계산
+                "ccsi":            ccsi.get(ym),
             })
 
-        # M2 증가율_3개월 계산
+        # M2 증가율_3개월, CPI 전년동월비 계산
         for i, rec in enumerate(records):
             if i >= 3:
                 cur = rec["m2_trillion"]
                 prv = records[i-3]["m2_trillion"]
                 if cur is not None and prv and prv != 0:
                     rec["m2_growth_3m"] = round((cur - prv) / prv * 100, 4)
+            if i >= 12:
+                cur_cpi = rec["cpi"]
+                prv_cpi = records[i-12]["cpi"]
+                if cur_cpi is not None and prv_cpi and prv_cpi != 0:
+                    rec["cpi_growth_12m"] = round((cur_cpi - prv_cpi) / prv_cpi * 100, 4)
 
         with sqlite3.connect(self.db_path) as conn:
             conn.executemany("""
                 INSERT OR REPLACE INTO ecos_macro
                 (ym, base_rate, mortgage_rate, m2_trillion, m2_growth_3m,
-                 leading_index, household_loan_trillion, rate_chg_3m, rate_chg_6m)
+                 leading_index, household_loan_trillion, rate_chg_3m, rate_chg_6m,
+                 cpi, cpi_growth_12m, ccsi)
                 VALUES (:ym, :base_rate, :mortgage_rate, :m2_trillion, :m2_growth_3m,
-                        :leading_index, :household_loan_trillion, :rate_chg_3m, :rate_chg_6m)
+                        :leading_index, :household_loan_trillion, :rate_chg_3m, :rate_chg_6m,
+                        :cpi, :cpi_growth_12m, :ccsi)
             """, records)
 
         log.info("ecos_macro 저장: %d건", len(records))
@@ -169,7 +197,8 @@ class EcosCollector:
         with sqlite3.connect(self.db_path) as conn:
             rows = conn.execute("""
                 SELECT ym, base_rate, mortgage_rate, m2_trillion, m2_growth_3m,
-                       leading_index, household_loan_trillion, rate_chg_3m, rate_chg_6m
+                       leading_index, household_loan_trillion, rate_chg_3m, rate_chg_6m,
+                       cpi, cpi_growth_12m, ccsi
                 FROM ecos_macro ORDER BY ym
             """).fetchall()
         return {
@@ -182,6 +211,9 @@ class EcosCollector:
                 "가계대출잔액":      r[6],
                 "금리변화_3개월":    r[7],
                 "금리변화_6개월":    r[8],
+                "CPI":               r[9],
+                "CPI상승률_전년비":  r[10],
+                "소비자심리지수":    r[11],
             }
             for r in rows
         }
