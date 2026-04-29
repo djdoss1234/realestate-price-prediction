@@ -9,6 +9,7 @@
 - 학교알리미
 """
 from .ecos_collector import EcosCollector
+from .unsold_house_collector import UnsoldHouseCollector
 from .kosis_collector import KosisCollector
 from .kakao_poi_collector import KakaoPOICollector
 from .subscription_collector import SubscriptionCollector
@@ -18,6 +19,7 @@ from .school_collector import SchoolCollector
 
 __all__ = [
     "EcosCollector",
+    "UnsoldHouseCollector",
     "KosisCollector",
     "KakaoPOICollector",
     "SubscriptionCollector",

@@ -365,6 +365,25 @@ CREATE TABLE IF NOT EXISTS collection_log (
 );
 
 
+-- ── 미분양 현황 ──────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS unsold_house_monthly (
+    sgg_cd            TEXT    NOT NULL,
+    sgg_nm            TEXT,
+    sido_cd           TEXT,
+    sido_nm           TEXT,
+    base_ym           TEXT    NOT NULL,
+    unsold_total      INTEGER,
+    unsold_after_comp INTEGER,
+    unsold_public     INTEGER,
+    unsold_private    INTEGER,
+    collected_at      TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (sgg_cd, base_ym)
+);
+
+CREATE INDEX IF NOT EXISTS idx_unsold_ym ON unsold_house_monthly (base_ym);
+
+
 -- ── ECOS 거시지표 ────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS ecos_macro (

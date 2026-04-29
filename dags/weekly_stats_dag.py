@@ -72,6 +72,17 @@ def collect_schools():
     result = c.collect_all(year=2023)
     print("학교 수집:", result)
 
+def collect_unsold():
+    from collectors.unsold_house_collector import UnsoldHouseCollector
+    from datetime import datetime
+    c = UnsoldHouseCollector(db_path=DB_PATH)
+    # 최근 3개월 수집
+    from dateutil.relativedelta import relativedelta
+    now = datetime.now()
+    start = (now - relativedelta(months=3)).strftime("%Y%m")
+    result = c.collect_range(start_ym=start)
+    print("미분양 수집:", result)
+
 def notify_success(context):
     if not SLACK_WEBHOOK:
         return
@@ -128,5 +139,11 @@ with DAG(
         execution_timeout=timedelta(hours=2),
     )
 
+    t_unsold = PythonOperator(
+        task_id="collect_unsold",
+        python_callable=collect_unsold,
+        execution_timeout=timedelta(hours=1),
+    )
+
     # 독립 병렬 수집
-    [t_kosis, t_ecos, t_sub, t_weather, t_land_price, t_school]
+    [t_kosis, t_ecos, t_sub, t_weather, t_land_price, t_school, t_unsold]
