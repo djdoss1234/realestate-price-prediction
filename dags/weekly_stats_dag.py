@@ -83,6 +83,14 @@ def collect_unsold():
     result = c.collect_range(start_ym=start)
     print("미분양 수집:", result)
 
+def collect_building_registry():
+    from collectors.building_registry_collector import BuildingRegistryCollector
+    c = BuildingRegistryCollector(db_path=DB_PATH)
+    # 거래 DB의 (sggCd, umdCd) 쌍 기반 자동 수집
+    result = c.collect_all()
+    print("건축물대장 수집:", result)
+
+
 def notify_success(context):
     if not SLACK_WEBHOOK:
         return
@@ -145,5 +153,11 @@ with DAG(
         execution_timeout=timedelta(hours=1),
     )
 
+    t_bldg = PythonOperator(
+        task_id="collect_building_registry",
+        python_callable=collect_building_registry,
+        execution_timeout=timedelta(hours=4),
+    )
+
     # 독립 병렬 수집
-    [t_kosis, t_ecos, t_sub, t_weather, t_land_price, t_school, t_unsold]
+    [t_kosis, t_ecos, t_sub, t_weather, t_land_price, t_school, t_unsold, t_bldg]

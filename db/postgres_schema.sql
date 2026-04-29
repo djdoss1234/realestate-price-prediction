@@ -400,6 +400,37 @@ CREATE TABLE IF NOT EXISTS ecos_macro (
 );
 
 
+-- ── 건축물대장 ──────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS building_registry (
+    mgm_pk         TEXT    PRIMARY KEY,
+    sigungu_cd     TEXT    NOT NULL,
+    bjdong_cd      TEXT,
+    plat_plc       TEXT,
+    new_plat_plc   TEXT,
+    bld_nm         TEXT,
+    use_apr_day    TEXT,
+    build_year     INTEGER,
+    grnd_flr_cnt   INTEGER,
+    ugrnd_flr_cnt  INTEGER,
+    tot_area       NUMERIC,
+    plat_area      NUMERIC,
+    arch_area      NUMERIC,
+    bc_rat         NUMERIC,
+    vl_rat         NUMERIC,
+    main_purps_cd  TEXT,
+    main_purps_nm  TEXT,
+    strct_cd       TEXT,
+    strct_nm       TEXT,
+    hhld_cnt       INTEGER,
+    fmly_cnt       INTEGER,
+    collected_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bldg_sigungu ON building_registry (sigungu_cd);
+CREATE INDEX IF NOT EXISTS idx_bldg_year    ON building_registry (build_year);
+
+
 -- ── KOSIS 거시통계 ────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS kosis_population (
