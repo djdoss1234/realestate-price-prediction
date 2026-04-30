@@ -5,8 +5,8 @@
   - 아파트 단지코드(kaptCode) ↔ 단지명·시군구코드 매핑 → kapt_identity
 
 API 키: DATA_GO_KR_API_KEY
-  - 단지목록: https://apis.data.go.kr/1611000/AptListService/getLegaldongAptList
-  - 단지기본: https://apis.data.go.kr/1611000/AptBasisInfoService/getAphusBassInfo
+  - 단지목록: https://apis.data.go.kr/1613000/AptListService3/getLegaldongAptList3
+  - 단지기본: https://apis.data.go.kr/1613000/AptBasisInfoServiceV4/getAphusBassInfoV4
 
 활용 목적:
   - apt_trade(실거래) ↔ kakao_poi ↔ school_info 등 데이터셋 간 단지코드 조인키
@@ -23,8 +23,8 @@ import requests
 
 log = logging.getLogger(__name__)
 
-LIST_URL  = "https://apis.data.go.kr/1611000/AptListService/getLegaldongAptList"
-BASIS_URL = "https://apis.data.go.kr/1611000/AptBasisInfoService/getAphusBassInfo"
+LIST_URL  = "https://apis.data.go.kr/1613000/AptListService3/getLegaldongAptList3"
+BASIS_URL = "https://apis.data.go.kr/1613000/AptBasisInfoServiceV4/getAphusBassInfoV4"
 
 DDL = """
 CREATE TABLE IF NOT EXISTS kapt_identity (
@@ -59,34 +59,32 @@ class AptComplexIdentityCollector:
             conn.execute(IDX)
             conn.execute(IDX2)
 
-    def _fetch_list(self, sgg_cd: str, page: int = 1, rows: int = 100) -> tuple[list, int]:
+    def _fetch_list(self, bjd_cd: str, page: int = 1, rows: int = 100) -> tuple[list, int]:
         if not self.api_key:
             return [], 0
-        for param_nm in ("ldongCode", "sigunguCd", "bjdongCd"):
-            try:
-                params = {
-                    "serviceKey": self.api_key,
-                    "numOfRows":  rows,
-                    "pageNo":     page,
-                    "_type":      "json",
-                    param_nm:     sgg_cd,
-                }
-                resp = self.session.get(LIST_URL, params=params, timeout=30)
-                if resp.status_code != 200:
-                    continue
-                body = resp.json().get("response", {}).get("body", {})
-                total = int(body.get("totalCount", 0))
-                items = body.get("items", {})
-                if not items:
-                    return [], total
-                batch = items.get("item", [])
-                if isinstance(batch, dict):
-                    batch = [batch]
-                if total > 0 or batch:
-                    log.debug("단지목록 %s 파라미터 작동: %s", sgg_cd, param_nm)
-                    return batch, total
-            except Exception as e:
-                log.debug("단지목록 오류 [%s=%s]: %s", param_nm, sgg_cd, e)
+        try:
+            params = {
+                "serviceKey": self.api_key,
+                "numOfRows":  rows,
+                "pageNo":     page,
+                "_type":      "json",
+                "bjdCode":    bjd_cd,
+            }
+            resp = self.session.get(LIST_URL, params=params, timeout=30)
+            if resp.status_code != 200:
+                return [], 0
+            body = resp.json().get("response", {}).get("body", {})
+            total = int(body.get("totalCount", 0))
+            items = body.get("items", [])
+            if not items:
+                return [], total
+            if isinstance(items, dict):
+                items = items.get("item", [])
+            if isinstance(items, dict):
+                items = [items]
+            return items or [], total
+        except Exception as e:
+            log.debug("단지목록 오류 [%s]: %s", bjd_cd, e)
         return [], 0
 
     def _fetch_basis(self, kapt_code: str) -> Optional[dict]:
@@ -101,24 +99,24 @@ class AptComplexIdentityCollector:
             if resp.status_code != 200:
                 return None
             body = resp.json().get("response", {}).get("body", {})
-            items = body.get("item") or body.get("items", {}).get("item")
-            if isinstance(items, list) and items:
-                return items[0]
-            if isinstance(items, dict):
-                return items
+            item = body.get("item")
+            if isinstance(item, list) and item:
+                return item[0]
+            if isinstance(item, dict):
+                return item
         except Exception as e:
             log.debug("단지기본 오류 [%s]: %s", kapt_code, e)
         return None
 
-    def collect_by_sgg(self, sgg_cd: str) -> int:
-        _, total = self._fetch_list(sgg_cd, rows=1)
+    def collect_by_sgg(self, bjd_cd: str) -> int:
+        _, total = self._fetch_list(bjd_cd, rows=1)
         if total == 0:
             return 0
 
         pages = (total + 99) // 100
         inserted = 0
         for page in range(1, pages + 1):
-            items, _ = self._fetch_list(sgg_cd, page=page, rows=100)
+            items, _ = self._fetch_list(bjd_cd, page=page, rows=100)
             with sqlite3.connect(self.db_path) as conn:
                 for r in items:
                     kapt_code = str(r.get("kaptCode", "")).strip()
@@ -126,6 +124,7 @@ class AptComplexIdentityCollector:
                         continue
                     basis = self._fetch_basis(kapt_code)
                     b = basis or {}
+                    bjd = str(r.get("bjdCode", "")).strip()
                     use_dt = str(b.get("kaptUsedate", "")).strip()
                     build_year = int(use_dt[:4]) if len(use_dt) >= 4 and use_dt[:4].isdigit() else None
                     try:
@@ -137,13 +136,13 @@ class AptComplexIdentityCollector:
                         """, (
                             kapt_code,
                             r.get("kaptName") or b.get("kaptName"),
-                            str(r.get("sigunguCd", ""))[:5],
-                            str(r.get("bjdongCd", ""))[:5],
-                            r.get("bjdongNm"),
-                            b.get("roadNmAddr"),
-                            b.get("jibunAddr"),
+                            bjd[:5] if bjd else None,
+                            bjd[5:] if len(bjd) >= 10 else None,
+                            r.get("as3") or r.get("as2"),
+                            b.get("doroJuso"),
+                            b.get("kaptAddr"),
                             build_year,
-                            _to_int(b.get("kaptTothhCnt")),
+                            _to_int(b.get("hoCnt")),
                         ))
                         inserted += 1
                     except Exception:
@@ -151,7 +150,7 @@ class AptComplexIdentityCollector:
                     time.sleep(0.1)
             time.sleep(0.3)
 
-        log.info("kapt_identity [%s]: %d건", sgg_cd, inserted)
+        log.info("kapt_identity [%s]: %d건", bjd_cd, inserted)
         return inserted
 
     def collect_all(self) -> dict:
@@ -160,21 +159,24 @@ class AptComplexIdentityCollector:
             return {"total": 0}
 
         with sqlite3.connect(self.db_path) as conn:
-            sgg_list = [r[0] for r in conn.execute(
-                "SELECT DISTINCT sggCd FROM apt_trade WHERE sggCd IS NOT NULL ORDER BY sggCd"
-            ).fetchall()]
+            bjd_list = [r[0] for r in conn.execute("""
+                SELECT DISTINCT sggCd || umdCd
+                FROM apt_trade
+                WHERE sggCd IS NOT NULL AND umdCd IS NOT NULL
+                ORDER BY 1
+            """).fetchall()]
 
-        if not sgg_list:
-            return {"total": 0, "sgg_count": 0}
+        if not bjd_list:
+            return {"total": 0, "bjd_count": 0}
 
         total = 0
-        for i, sgg_cd in enumerate(sgg_list, 1):
-            n = self.collect_by_sgg(str(sgg_cd))
+        for i, bjd_cd in enumerate(bjd_list, 1):
+            n = self.collect_by_sgg(str(bjd_cd))
             total += n
-            if i % 10 == 0:
-                log.info("단지식별 진행: %d/%d 시군구 (누적 %d건)", i, len(sgg_list), total)
+            if i % 50 == 0:
+                log.info("단지식별 진행: %d/%d 법정동 (누적 %d건)", i, len(bjd_list), total)
 
-        return {"total": total, "sgg_count": len(sgg_list)}
+        return {"total": total, "bjd_count": len(bjd_list)}
 
 
 def _to_int(v) -> Optional[int]:

@@ -50,46 +50,50 @@ class LhRentalCollector:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(DDL)
 
-    def _get_pages(self, extra_params: dict = None) -> list[dict]:
+    def _get_period(self, start_dt: str, end_dt: str) -> list[dict]:
+        """LH API 응답: [{dsSch:[]}, {dsList:[], resHeader:[]}] 커스텀 포맷"""
         if not self.api_key:
             log.warning("DATA_GO_KR_API_KEY 없음 — LH임대 수집 스킵")
             return []
-        p = {
-            "serviceKey": self.api_key,
-            "numOfRows":  100,
-            "pageNo":     1,
-            "resultType": "json",
-            **(extra_params or {}),
-        }
-        rows = []
-        while True:
-            try:
-                resp = self.session.get(BASE_URL, params=p, timeout=30)
-                if resp.status_code != 200:
-                    log.warning("LH임대 API HTTP %d: %s", resp.status_code, resp.text[:200])
-                    break
-                resp.raise_for_status()
-                body = resp.json().get("response", {}).get("body", {})
-                items = body.get("items", {})
-                batch = items.get("item", []) if isinstance(items, dict) else []
-                if isinstance(batch, dict):
-                    batch = [batch]
-                rows.extend(batch)
-                total = int(body.get("totalCount", 0))
-                if len(rows) >= total or not batch:
-                    break
-                p["pageNo"] += 1
-                time.sleep(0.3)
-            except Exception as e:
-                log.error("LH임대 API 오류: %s", e)
-                break
-        return rows
+        try:
+            resp = self.session.get(BASE_URL, params={
+                "serviceKey": self.api_key,
+                "resultType": "json",
+                "PAN_ST_DT":  start_dt,
+                "PAN_ED_DT":  end_dt,
+            }, timeout=60)
+            if resp.status_code != 200:
+                log.warning("LH임대 API HTTP %d: %s", resp.status_code, resp.text[:200])
+                return []
+            data = resp.json()
+            if isinstance(data, list):
+                for chunk in data:
+                    if "dsList" in chunk:
+                        return chunk["dsList"] or []
+            return []
+        except Exception as e:
+            log.error("LH임대 API 오류 [%s~%s]: %s", start_dt, end_dt, e)
+            return []
 
     def collect_notices(self, start_ym: str = "202001") -> int:
-        rows = self._get_pages({"startRcritPblancDe": start_ym + "01"})
+        from datetime import date
+        import calendar
+        start_year = int(start_ym[:4])
+        start_mon  = int(start_ym[4:6])
+        today = date.today()
+        rows_all = []
+        # 월별로 쪼개서 조회 (전체 범위는 timeout)
+        y, m = start_year, start_mon
+        while (y, m) <= (today.year, today.month):
+            last_day = calendar.monthrange(y, m)[1]
+            rows = self._get_period(f"{y}{m:02d}01", f"{y}{m:02d}{last_day:02d}")
+            rows_all.extend(rows)
+            if m == 12: y, m = y+1, 1
+            else: m += 1
+            time.sleep(0.3)
         inserted = 0
         with sqlite3.connect(self.db_path) as conn:
-            for r in rows:
+            for r in rows_all:
                 try:
                     conn.execute("""
                         INSERT OR REPLACE INTO lh_rental
@@ -98,19 +102,19 @@ class LhRentalCollector:
                          mvn_prearnge_ym, rent_type_nm, bsns_mby_nm, hssply_adres)
                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """, (
-                        r.get("pblancNo") or r.get("PBLANC_NO"),
-                        r.get("houseNm") or r.get("HOUSE_NM"),
-                        r.get("houseSecdNm") or r.get("HOUSE_SECD_NM"),
-                        r.get("sggCd") or r.get("SGG_CD"),
-                        r.get("sggNm") or r.get("SGG_NM"),
-                        _to_int(r.get("totSuplyHshldco") or r.get("TOT_SUPLY_HSHLDCO")),
-                        r.get("pblancDe") or r.get("PBLANC_DE"),
-                        r.get("rceptBgnde") or r.get("RCEPT_BGNDE"),
-                        r.get("rceptEndde") or r.get("RCEPT_ENDDE"),
-                        r.get("mvnPrearngeYm") or r.get("MVN_PREARNGE_YM"),
-                        r.get("rentTypeNm") or r.get("RENT_TYPE_NM"),
-                        r.get("bsnsMbyNm") or r.get("BSNS_MBY_NM"),
-                        r.get("hssplyAdres") or r.get("HSSPLY_ADRES"),
+                        r.get("PAN_NO") or r.get("pblancNo"),
+                        r.get("AIS_TP_CD_NM") or r.get("houseNm"),
+                        r.get("RENT_GBN_NM") or r.get("houseSecdNm"),
+                        r.get("CNP_CD") or r.get("sggCd"),
+                        r.get("CNP_CD_NM") or r.get("sggNm"),
+                        _to_int(r.get("TOT_SUPLY_HSHLDCO") or r.get("totSuplyHshldco")),
+                        r.get("PAN_DT") or r.get("pblancDe"),
+                        r.get("RCRIT_PD_BEG_DT") or r.get("rceptBgnde"),
+                        r.get("RCRIT_PD_END_DT") or r.get("rceptEndde"),
+                        r.get("MVN_PREARNGE_YM") or r.get("mvnPrearngeYm"),
+                        r.get("RENT_GBN") or r.get("rentTypeNm"),
+                        r.get("BSNS_MBY_NM") or r.get("bsnsMbyNm"),
+                        r.get("HSSPLY_ADRES") or r.get("hssplyAdres"),
                     ))
                     inserted += 1
                 except Exception as e:

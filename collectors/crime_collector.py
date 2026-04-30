@@ -4,8 +4,8 @@
 수집 항목:
   - 시도별 범죄 발생/검거 현황 → crime_stats
 
-API 키: DATA_GO_KR_API_KEY (B552055)
-엔드포인트: https://apis.data.go.kr/B552055/CrmnlStatService/getCrmnlStatInfo
+API 키: DATA_GO_KR_API_KEY (B554626)
+엔드포인트: https://apis.data.go.kr/B554626/CrimeStatistics/getCrimeStatistics
 """
 
 import logging
@@ -18,7 +18,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-BASE_URL = "https://apis.data.go.kr/B552055/CrmnlStatService/getCrmnlStatInfo"
+BASE_URL = "https://apis.data.go.kr/B554626/CrimeStatistics/getCrimeStatistics"
 
 DDL = """
 CREATE TABLE IF NOT EXISTS crime_stats (
@@ -44,23 +44,24 @@ class CrimeCollector:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(DDL)
 
-    def _get_pages(self, extra_params: dict = None) -> list[dict]:
+    def _get_year(self, year: int) -> list[dict]:
+        """연도별 범죄통계 조회 — 응답: {shtNm, statsYr, artcl[], clsf[], statsVl[]}"""
         if not self.api_key:
             log.warning("DATA_GO_KR_API_KEY 없음 — 범죄통계 수집 스킵")
             return []
-        p = {
-            "serviceKey": self.api_key,
-            "numOfRows":  100,
-            "pageNo":     1,
-            "resultType": "json",
-            **(extra_params or {}),
-        }
         rows = []
+        page = 1
         while True:
             try:
-                resp = self.session.get(BASE_URL, params=p, timeout=30)
+                resp = self.session.get(BASE_URL, params={
+                    "serviceKey": self.api_key,
+                    "numOfRows":  100,
+                    "pageNo":     page,
+                    "resultType": "json",
+                    "statsYr":    str(year),
+                }, timeout=30)
                 if resp.status_code != 200:
-                    log.warning("범죄통계 API HTTP %d: %s", resp.status_code, resp.text[:200])
+                    log.warning("범죄통계 API HTTP %d", resp.status_code)
                     break
                 body = resp.json().get("response", {}).get("body", {})
                 items = body.get("items", {})
@@ -71,7 +72,7 @@ class CrimeCollector:
                 total = int(body.get("totalCount", 0))
                 if len(rows) >= total or not batch:
                     break
-                p["pageNo"] += 1
+                page += 1
                 time.sleep(0.3)
             except Exception as e:
                 log.error("범죄통계 API 오류: %s", e)
@@ -80,28 +81,31 @@ class CrimeCollector:
 
     def collect_stats(self, start_year: int = 2020) -> int:
         from datetime import date
-        end_year = date.today().year - 1  # 전년도까지만 확정치 제공
+        end_year = date.today().year - 1
         inserted = 0
         with sqlite3.connect(self.db_path) as conn:
             for year in range(start_year, end_year + 1):
-                rows = self._get_pages({"crimeYear": str(year)})
+                rows = self._get_year(year)
                 for r in rows:
-                    try:
-                        conn.execute("""
-                            INSERT OR REPLACE INTO crime_stats
-                            (sgg_cd, sgg_nm, year, crime_type, occur_cnt, arrest_cnt)
-                            VALUES (?,?,?,?,?,?)
-                        """, (
-                            r.get("sidoCd") or r.get("sggCd") or r.get("areaCd"),
-                            r.get("sidoNm") or r.get("sggNm") or r.get("areaNm"),
-                            year,
-                            r.get("crimeType") or r.get("crimeNm") or r.get("crime"),
-                            _to_int(r.get("occurCnt") or r.get("occurNum")),
-                            _to_int(r.get("arrestCnt") or r.get("arrestNum")),
-                        ))
-                        inserted += 1
-                    except Exception as e:
-                        log.debug("범죄통계 저장 실패: %s", e)
+                    # API 응답: artcl[i]=범죄유형, clsf[i]=분류코드, statsVl[i]=수치값
+                    artcl = r.get("artcl") or []
+                    clsf  = r.get("clsf")  or []
+                    vals  = r.get("statsVl") or []
+                    area  = r.get("shtNm") or ""
+                    if not artcl:
+                        continue
+                    for i, crime_nm in enumerate(artcl):
+                        occur = _to_int(vals[i]) if i < len(vals) else None
+                        cls   = clsf[i] if i < len(clsf) else None
+                        try:
+                            conn.execute("""
+                                INSERT OR REPLACE INTO crime_stats
+                                (sgg_cd, sgg_nm, year, crime_type, occur_cnt, arrest_cnt)
+                                VALUES (?,?,?,?,?,?)
+                            """, (area, area, year, f"{cls}:{crime_nm}" if cls else crime_nm, occur, None))
+                            inserted += 1
+                        except Exception:
+                            pass
                 time.sleep(0.5)
         log.info("crime_stats 저장: %d건", inserted)
         return inserted

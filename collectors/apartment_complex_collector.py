@@ -6,8 +6,8 @@
   - 공동주택기본정보 → apt_complex (단지코드 기준 상세)
 
 API: data.go.kr
-  - 공동주택단지목록: 1611000/AptListService/getLegaldongAptList
-  - 공동주택기본정보: 1611000/AptBasisInfoService/getAphusBassInfo
+  - 공동주택단지목록: 1613000/AptListService3/getLegaldongAptList3
+  - 공동주택기본정보: 1613000/AptBasisInfoServiceV4/getAphusBassInfoV4
 
 주요 활용:
   - kaptCode: 공동주택 단지코드 (청약홈, 학군 등 연결 키)
@@ -27,8 +27,8 @@ import requests
 
 log = logging.getLogger(__name__)
 
-LIST_URL  = "https://apis.data.go.kr/1611000/AptListService/getLegaldongAptList"
-BASIS_URL = "https://apis.data.go.kr/1611000/AptBasisInfoService/getAphusBassInfo"
+LIST_URL  = "https://apis.data.go.kr/1613000/AptListService3/getLegaldongAptList3"
+BASIS_URL = "https://apis.data.go.kr/1613000/AptBasisInfoServiceV4/getAphusBassInfoV4"
 
 DDL = """
 CREATE TABLE IF NOT EXISTS apt_complex (
@@ -77,7 +77,7 @@ class ApartmentComplexCollector:
                 "numOfRows":  rows,
                 "pageNo":     page,
                 "_type":      "json",
-                "ldongCode":  ldong_cd,   # 실제 파라미터명
+                "bjdCode":    ldong_cd,
             }
             resp = self.session.get(LIST_URL, params=params, timeout=30)
             if resp.status_code != 200:
@@ -85,36 +85,36 @@ class ApartmentComplexCollector:
                 return [], 0
             body = resp.json().get("response", {}).get("body", {})
             total = int(body.get("totalCount", 0))
-            items = body.get("items", {})
+            items = body.get("items", [])
             if not items:
                 return [], total
-            rows_data = items.get("item", [])
-            if isinstance(rows_data, dict):
-                rows_data = [rows_data]
-            return rows_data, total
+            if isinstance(items, dict):
+                items = items.get("item", [])
+            if isinstance(items, dict):
+                items = [items]
+            return items or [], total
         except Exception as e:
             log.error("공동주택단지목록 오류 [%s]: %s", ldong_cd, e)
             return [], 0
 
     def _fetch_basis(self, kapt_code: str) -> Optional[dict]:
-        """단지코드로 기본정보 조회"""
+        """단지코드로 기본정보 조회 (V4)"""
         if not self.api_key:
             return None
         try:
-            params = {
+            resp = self.session.get(BASIS_URL, params={
                 "serviceKey": self.api_key,
                 "_type":      "json",
                 "kaptCode":   kapt_code,
-            }
-            resp = self.session.get(BASIS_URL, params=params, timeout=30)
+            }, timeout=30)
             if resp.status_code != 200:
                 return None
             body = resp.json().get("response", {}).get("body", {})
-            items = body.get("item", None) or body.get("items", {}).get("item", None)
-            if isinstance(items, list) and items:
-                return items[0]
-            if isinstance(items, dict):
-                return items
+            item = body.get("item")
+            if isinstance(item, list) and item:
+                return item[0]
+            if isinstance(item, dict):
+                return item
             return None
         except Exception as e:
             log.error("공동주택기본정보 오류 [%s]: %s", kapt_code, e)
@@ -125,8 +125,9 @@ class ApartmentComplexCollector:
         if not kapt_code:
             return False
         b = basis or {}
-        use_apr = str(b.get("kaptUsedate", "")).strip()
-        build_year = int(use_apr[:4]) if len(use_apr) >= 4 and use_apr[:4].isdigit() else None
+        bjd = str(r.get("bjdCode", "")).strip()
+        use_dt = str(b.get("kaptUsedate", "")).strip()
+        build_year = int(use_dt[:4]) if len(use_dt) >= 4 and use_dt[:4].isdigit() else None
         try:
             conn.execute("""
                 INSERT OR REPLACE INTO apt_complex
@@ -137,18 +138,18 @@ class ApartmentComplexCollector:
             """, (
                 kapt_code,
                 r.get("kaptName", "") or b.get("kaptName", ""),
-                str(r.get("sigunguCd", ""))[:5],
-                str(r.get("bjdongCd", ""))[:5],
-                r.get("bjdongNm", ""),
+                bjd[:5] if bjd else None,
+                bjd[5:] if len(bjd) >= 10 else None,
+                r.get("as3", "") or r.get("as2", ""),   # as3=동, as2=구
                 build_year,
-                _to_int(b.get("kaptTothhCnt")),
-                _to_int(b.get("kaptMaxFloor")),
-                _to_int(b.get("kaptMinFloor")),
-                b.get("kaptHeatMethd", ""),
-                b.get("kaptBuilder", ""),
-                b.get("kaptMngrNm", ""),
-                b.get("roadNmAddr", ""),
-                b.get("jibunAddr", ""),
+                _to_int(b.get("hoCnt")),
+                _to_int(b.get("kaptTopFloor")),
+                _to_int(b.get("kaptBaseFloor")),
+                b.get("codeHeatNm", ""),
+                b.get("kaptBcompany", ""),
+                b.get("codeMgrNm", ""),
+                b.get("doroJuso", ""),
+                b.get("kaptAddr", ""),
             ))
             return True
         except Exception:

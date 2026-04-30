@@ -127,32 +127,35 @@ class CommercialDistrictCollector:
             time.sleep(0.2)
         return inserted
 
-    def collect_all(self, radius: int = 500) -> dict:
-        """kakao_poi 아파트 단지 좌표 기반으로 반경 내 상가 수집"""
+    def collect_all(self, radius: int = 1000) -> dict:
+        """kakao_poi 기반 1km 그리드 좌표로 상가 수집 (중복 API 호출 최소화)"""
         if not self.api_key:
             log.warning("DATA_GO_KR_API_KEY 없음 — 상가정보 수집 스킵")
             return {"total": 0}
 
         with sqlite3.connect(self.db_path) as conn:
+            # 1km 격자로 rounding (위도 0.009도 ≈ 1km, 경도 0.011도 ≈ 1km)
             apts = conn.execute("""
-                SELECT DISTINCT ROUND(lat, 4), ROUND(lng, 4)
+                SELECT DISTINCT
+                    ROUND(lat / 0.009) * 0.009  AS grid_lat,
+                    ROUND(lng / 0.011) * 0.011  AS grid_lng
                 FROM kakao_poi
                 WHERE lat IS NOT NULL AND lng IS NOT NULL
                   AND lat BETWEEN 33 AND 38.5
                   AND lng BETWEEN 125 AND 131
-                ORDER BY lat, lng
+                ORDER BY grid_lat, grid_lng
             """).fetchall()
 
         total = 0
         for i, (cy, cx) in enumerate(apts, 1):
             n = self.collect_around_point(cx, cy, radius)
             total += n
-            if i % 200 == 0:
-                log.info("상가수집 진행: %d/%d 단지 (누적 %d건)", i, len(apts), total)
-            time.sleep(0.1)
+            if i % 100 == 0:
+                log.info("상가수집 진행: %d/%d 격자 (누적 %d건)", i, len(apts), total)
+            time.sleep(0.5)  # 429 방지: 초당 2건 이하
 
         log.info("상가정보 수집 완료: %d건", total)
-        return {"total": total, "apt_count": len(apts)}
+        return {"total": total, "grid_count": len(apts)}
 
 
 def _to_float(v) -> Optional[float]:
