@@ -65,26 +65,33 @@ class CommercialDistrictCollector:
                     page: int = 1, page_size: int = 1000) -> tuple[list, int]:
         if not self.api_key:
             return [], 0
-        try:
-            resp = self.session.get(BASE_URL, params={
-                "serviceKey": self.api_key,
-                "cx":         cx,
-                "cy":         cy,
-                "radius":     radius,
-                "pageNo":     page,
-                "pageSize":   page_size,
-                "type":       "json",
-            }, timeout=30)
-            resp.raise_for_status()
-            body = resp.json().get("body", {})
-            total = int(body.get("totalCount", 0))
-            items = body.get("items", [])
-            if isinstance(items, dict):
-                items = [items]
-            return items or [], total
-        except Exception as e:
-            log.error("상가정보 API 오류 [%.4f,%.4f]: %s", cx, cy, e)
-            return [], 0
+        for attempt in range(5):
+            try:
+                resp = self.session.get(BASE_URL, params={
+                    "serviceKey": self.api_key,
+                    "cx":         cx,
+                    "cy":         cy,
+                    "radius":     radius,
+                    "pageNo":     page,
+                    "pageSize":   page_size,
+                    "type":       "json",
+                }, timeout=30)
+                if resp.status_code == 429:
+                    wait = 10 * (2 ** attempt)  # 10, 20, 40, 80, 160s
+                    log.warning("상가정보 429 — %d초 대기 후 재시도 (%d/5)", wait, attempt + 1)
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                body = resp.json().get("body", {})
+                total = int(body.get("totalCount", 0))
+                items = body.get("items", [])
+                if isinstance(items, dict):
+                    items = [items]
+                return items or [], total
+            except Exception as e:
+                log.error("상가정보 API 오류 [%.4f,%.4f]: %s", cx, cy, e)
+                return [], 0
+        return [], 0
 
     def collect_around_point(self, cx: float, cy: float, radius: int = 500) -> int:
         _, total = self._fetch_page(cx, cy, radius, page=1, page_size=1)
@@ -152,7 +159,7 @@ class CommercialDistrictCollector:
             total += n
             if i % 100 == 0:
                 log.info("상가수집 진행: %d/%d 격자 (누적 %d건)", i, len(apts), total)
-            time.sleep(0.5)  # 429 방지: 초당 2건 이하
+            time.sleep(1.5)  # 429 방지: 초당 0.67건 이하
 
         log.info("상가정보 수집 완료: %d건", total)
         return {"total": total, "grid_count": len(apts)}

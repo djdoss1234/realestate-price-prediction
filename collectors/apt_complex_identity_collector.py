@@ -166,17 +166,29 @@ class AptComplexIdentityCollector:
                 ORDER BY 1
             """).fetchall()]
 
+            # 이미 수집된 법정동 건너뛰기 (중단 재개 체크포인트)
+            done_bjd = {r[0] for r in conn.execute("""
+                SELECT DISTINCT sigungu_cd || bjdong_cd
+                FROM kapt_identity
+                WHERE sigungu_cd IS NOT NULL AND bjdong_cd IS NOT NULL
+            """).fetchall()}
+
         if not bjd_list:
             return {"total": 0, "bjd_count": 0}
 
+        remaining = [b for b in bjd_list if b not in done_bjd]
+        if done_bjd:
+            log.info("단지식별 체크포인트: %d/%d 법정동 완료, %d개 재개",
+                     len(done_bjd), len(bjd_list), len(remaining))
+
         total = 0
-        for i, bjd_cd in enumerate(bjd_list, 1):
+        for i, bjd_cd in enumerate(remaining, 1):
             n = self.collect_by_sgg(str(bjd_cd))
             total += n
             if i % 50 == 0:
-                log.info("단지식별 진행: %d/%d 법정동 (누적 %d건)", i, len(bjd_list), total)
+                log.info("단지식별 진행: %d/%d 남은 법정동 (누적 %d건)", i, len(remaining), total)
 
-        return {"total": total, "bjd_count": len(bjd_list)}
+        return {"total": total, "bjd_count": len(bjd_list), "skipped": len(done_bjd)}
 
 
 def _to_int(v) -> Optional[int]:
