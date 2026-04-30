@@ -20,8 +20,8 @@ import requests
 
 log = logging.getLogger(__name__)
 
-# 교육통계서비스 (공공데이터포털)
-SCHOOL_URL       = "https://apis.data.go.kr/B553077/SchoolBasicInfoService/getSchoolList"
+# NEIS 학교정보 (open.neis.go.kr)
+SCHOOL_URL       = "https://open.neis.go.kr/hub/schoolInfo"
 ACHIEVEMENT_URL  = "https://open.neis.go.kr/hub/SchoolAchievementInfo"
 
 DDL_SCHOOL = """
@@ -84,8 +84,8 @@ class SchoolCollector:
             conn.execute(DDL_DISTRICT)
 
     def collect_schools(self, sido_cd: str = "") -> int:
-        if not self.api_key:
-            log.warning("DATA_GO_KR_API_KEY 없음 — 학교 수집 스킵")
+        if not self.neis_key:
+            log.warning("NEIS_API_KEY 없음 — 학교목록 수집 스킵")
             return 0
 
         school_types = ["초등학교", "중학교", "고등학교"]
@@ -95,23 +95,23 @@ class SchoolCollector:
             page = 1
             while True:
                 params = {
-                    "serviceKey": self.api_key,
-                    "numOfRows":  100,
-                    "pageNo":     page,
-                    "schuldivs":  stype,
-                    "resultType": "json",
+                    "KEY":              self.neis_key,
+                    "Type":             "json",
+                    "pIndex":           page,
+                    "pSize":            1000,
+                    "SCHUL_KND_SC_NM":  stype,
                 }
                 if sido_cd:
-                    params["sidoCd"] = sido_cd
+                    params["ATPT_OFCDC_SC_NM"] = sido_cd
 
                 try:
                     resp = self.session.get(SCHOOL_URL, params=params, timeout=30)
                     resp.raise_for_status()
-                    body = resp.json().get("response", {}).get("body", {})
-                    items = body.get("items", {})
-                    batch = items.get("item", []) if isinstance(items, dict) else []
-                    if isinstance(batch, dict):
-                        batch = [batch]
+                    data = resp.json()
+                    items = data.get("schoolInfo", [{}])
+                    if len(items) < 2:
+                        break
+                    batch = items[1].get("row", [])
                     if not batch:
                         break
 
@@ -125,24 +125,29 @@ class SchoolCollector:
                                      student_cnt, class_cnt)
                                     VALUES (?,?,?,?,?,?,?,?,?,?,?)
                                 """, (
-                                    r.get("schulCode"), r.get("schulNm"), stype,
-                                    r.get("sggCd"), r.get("sidoNm"), r.get("sggNm"),
-                                    r.get("adres"),
-                                    _to_float(r.get("la")), _to_float(r.get("lo")),
-                                    _to_int(r.get("stdntCo")), _to_int(r.get("clCo")),
+                                    r.get("SD_SCHUL_CODE"),
+                                    r.get("SCHUL_NM"),
+                                    stype,
+                                    r.get("LCTN_SC_NM"),        # 소재지구분명(시군구 대신)
+                                    r.get("ATPT_OFCDC_SC_NM"),  # 시도교육청명
+                                    r.get("LCTN_SC_NM"),
+                                    r.get("ORG_RDNMA"),          # 도로명주소
+                                    _to_float(r.get("LATIT_VALUE")),
+                                    _to_float(r.get("LONGT_VALUE")),
+                                    None, None,
                                 ))
                                 inserted += 1
                             except Exception:
                                 pass
 
-                    total = int(body.get("totalCount", 0))
-                    if len(batch) < 100 or inserted >= total:
+                    if len(batch) < 1000:
                         break
                     page += 1
                     time.sleep(0.2)
                 except Exception as e:
-                    log.error("학교 수집 오류 [%s]: %s", stype, e)
+                    log.error("학교 수집 오류 [%s p%d]: %s", stype, page, e)
                     break
+            log.info("school_info [%s]: %d건 누적", stype, inserted)
 
         log.info("school_info 저장: %d건", inserted)
         return inserted

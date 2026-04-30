@@ -103,8 +103,8 @@ class WeatherCollector:
             end_date = datetime.now().strftime("%Y%m%d")
 
         rows = self._get(WARN_LIST_URL, {
-            "fromTmFc": start_date,
-            "toTmFc":   end_date,
+            "fromTmFc": start_date + "0000",    # API 요구 형식: YYYYMMDDHHMM
+            "toTmFc":   end_date + "2359",
         })
 
         inserted = 0
