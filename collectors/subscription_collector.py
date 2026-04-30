@@ -1,12 +1,13 @@
 """
-한국부동산원 청약 정보 API 수집기
-===================================
+청약홈 아파트 청약 공고 수집기
+=================================
 수집 항목:
-  - 아파트 청약 공고 목록        → subscription_notice
-  - 청약 결과 (경쟁률, 당첨가점)  → subscription_result
+  - 아파트 청약 공고 목록 → subscription_notice
+  - 주택 유형별 경쟁률    → subscription_result
 
-API 키 발급: https://www.reb.or.kr/reb/brd/m_40/view.do (부동산원 OpenAPI)
-공공데이터포털: https://www.data.go.kr (아파트분양정보서비스)
+API: api.odcloud.kr ApplyhomeInfoDetailSvc
+  - 공고: https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1/getAPTLttotPblancDetail
+  - 경쟁: https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1/getAPTLttotPblancDetailRanking
 """
 
 import logging
@@ -19,9 +20,8 @@ import requests
 
 log = logging.getLogger(__name__)
 
-# 공공데이터포털 아파트 분양정보 API
-NOTICE_URL = "https://apis.data.go.kr/B552555/APTInfoService/getAPTNoticeInfo"
-RESULT_URL = "https://apis.data.go.kr/B552555/APTInfoService/getAPTResultInfo"
+NOTICE_URL = "https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1/getAPTLttotPblancDetail"
+RESULT_URL = "https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1/getAPTLttotPblancDetailRanking"
 
 DDL_NOTICE = """
 CREATE TABLE IF NOT EXISTS subscription_notice (
@@ -64,54 +64,63 @@ class SubscriptionCollector:
             conn.execute(DDL_NOTICE)
             conn.execute(DDL_RESULT)
 
-    def _get(self, url: str, params: dict) -> list[dict]:
+    def _get(self, url: str, extra_params: dict = None) -> list[dict]:
         if not self.api_key:
             log.warning("DATA_GO_KR_API_KEY 없음 — 청약 수집 스킵")
             return []
-        p = {"serviceKey": self.api_key, "numOfRows": 100, "pageNo": 1,
-             "resultType": "json", **params}
+        p = {
+            "page":       1,
+            "perPage":    1000,
+            "serviceKey": self.api_key,
+            **(extra_params or {}),
+        }
         rows = []
         while True:
             try:
                 resp = self.session.get(url, params=p, timeout=30)
                 resp.raise_for_status()
-                body = resp.json().get("response", {}).get("body", {})
-                items = body.get("items", {})
-                batch = items.get("item", []) if isinstance(items, dict) else []
-                if isinstance(batch, dict):
-                    batch = [batch]
+                js = resp.json()
+                batch = js.get("data", [])
+                if not isinstance(batch, list):
+                    log.warning("청약 API 응답 형식 오류: %s", str(js)[:200])
+                    break
                 rows.extend(batch)
-                total = int(body.get("totalCount", 0))
+                total = int(js.get("totalCount", 0))
                 if len(rows) >= total or not batch:
                     break
-                p["pageNo"] += 1
+                p["page"] += 1
                 time.sleep(0.3)
             except Exception as e:
                 log.error("청약 API 오류: %s", e)
                 break
+        log.info("청약 API %s 응답 %d건", url.split("/")[-1], len(rows))
         return rows
 
     def collect_notices(self, start_ym: str = "202301") -> int:
-        rows = self._get(NOTICE_URL, {"startRcritPblancDe": start_ym + "01"})
+        start_date = start_ym + "01"
+        rows = self._get(NOTICE_URL, {
+            "cond[RCRIT_PBLANC_DE::GTE]": start_date,
+        })
         inserted = 0
         with sqlite3.connect(self.db_path) as conn:
             for r in rows:
                 try:
+                    mvy = str(r.get("MOVE_IN_PREARNGE_YM") or "")
                     conn.execute("""
                         INSERT OR REPLACE INTO subscription_notice
                         (house_manage_no, house_nm, sgg_cd, sgg_nm,
-                         supply_count, recruit_from, recruit_to,
-                         move_in_year, move_in_month, min_price_10k, max_price_10k)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                         supply_count, recruit_from,
+                         move_in_year, move_in_month)
+                        VALUES (?,?,?,?,?,?,?,?)
                     """, (
-                        r.get("houseManageNo"), r.get("houseNm"),
-                        r.get("sggCd"), r.get("sggNm"),
-                        _to_int(r.get("totSuplyHshldco")),
-                        r.get("rcritPblancDe"), r.get("subscrptRceptEndDe"),
-                        _to_int(r.get("mvnPrearngeYm", "")[:4] if r.get("mvnPrearngeYm") else None),
-                        _to_int(r.get("mvnPrearngeYm", "")[4:6] if r.get("mvnPrearngeYm") else None),
-                        _to_int(r.get("lllotNm")),
-                        _to_int(r.get("lllotNm")),
+                        r.get("HOUSE_MANAGE_NO"),
+                        r.get("HOUSE_NM"),
+                        r.get("SUBSCRPT_AREA_CODE"),
+                        r.get("SUBSCRPT_AREA_CODE_NM"),
+                        _to_int(r.get("TOT_SUPLY_HSHLDCO")),
+                        r.get("RCRIT_PBLANC_DE"),
+                        _to_int(mvy[:4]) if len(mvy) >= 4 else None,
+                        _to_int(mvy[4:6]) if len(mvy) >= 6 else None,
                     ))
                     inserted += 1
                 except Exception as e:
@@ -120,7 +129,10 @@ class SubscriptionCollector:
         return inserted
 
     def collect_results(self, start_ym: str = "202301") -> int:
-        rows = self._get(RESULT_URL, {"startRcritPblancDe": start_ym + "01"})
+        start_date = start_ym + "01"
+        rows = self._get(RESULT_URL, {
+            "cond[RCRIT_PBLANC_DE::GTE]": start_date,
+        })
         inserted = 0
         with sqlite3.connect(self.db_path) as conn:
             for r in rows:
@@ -132,12 +144,12 @@ class SubscriptionCollector:
                          winner_score_max, winner_score_avg)
                         VALUES (?,?,?,?,?,?)
                     """, (
-                        r.get("houseManageNo"),
-                        r.get("hssplyTypeCd"),
-                        _to_float(r.get("compttRt")),
-                        _to_int(r.get("mnmumScre")),
-                        _to_int(r.get("mxmumScre")),
-                        _to_float(r.get("avrgScre")),
+                        r.get("HOUSE_MANAGE_NO"),
+                        r.get("HOUSE_TYPE_CD") or r.get("HSSPLY_AREA"),
+                        _to_float(r.get("COMPTT_RT")),
+                        _to_int(r.get("MNMUM_SCRE")),
+                        _to_int(r.get("MXMUM_SCRE")),
+                        _to_float(r.get("AVRG_SCRE")),
                     ))
                     inserted += 1
                 except Exception as e:

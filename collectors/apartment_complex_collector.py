@@ -77,7 +77,7 @@ class ApartmentComplexCollector:
                 "numOfRows":  rows,
                 "pageNo":     page,
                 "_type":      "json",
-                "ldongCd":    ldong_cd,
+                "ldongCode":  ldong_cd,   # 실제 파라미터명
             }
             resp = self.session.get(LIST_URL, params=params, timeout=30)
             if resp.status_code != 200:

@@ -136,29 +136,51 @@ class KakaoPOICollector:
         time.sleep(0.1)   # Kakao API 초당 10회 제한
         return result
 
+    def _get_coord_by_keyword(self, apt_nm: str, umd_nm: str) -> Optional[tuple[float, float]]:
+        """Kakao 키워드 검색으로 단지 좌표 반환 (lat, lng)"""
+        if not self.api_key:
+            return None
+        query = f"{umd_nm} {apt_nm}"
+        try:
+            resp = self.session.get(KEYWORD_URL, params={
+                "query": query, "size": 1,
+            }, timeout=10)
+            resp.raise_for_status()
+            docs = resp.json().get("documents", [])
+            if docs:
+                return float(docs[0]["y"]), float(docs[0]["x"])
+        except Exception as e:
+            log.warning("좌표 검색 실패 [%s]: %s", query, e)
+        return None
+
     def collect_from_db(self, limit: int = 1000):
-        """apt_trade DB에서 단지 좌표를 가져와 POI 수집"""
+        """apt_trade DB에서 단지 목록을 가져와 Kakao 키워드 검색으로 좌표 취득 후 POI 수집"""
         with sqlite3.connect(self.db_path) as conn:
-            # 이미 수집된 단지 제외
             apts = conn.execute("""
-                SELECT DISTINCT aptNm, sggCd,
-                       AVG(CAST(lat AS REAL)) AS lat,
-                       AVG(CAST(lng AS REAL)) AS lng
+                SELECT DISTINCT aptNm, sggCd, umdNm
                 FROM apt_trade
-                WHERE lat IS NOT NULL AND lat != ''
-                  AND aptNm NOT IN (SELECT apt_nm FROM kakao_poi)
+                WHERE aptNm NOT IN (SELECT apt_nm FROM kakao_poi)
                 GROUP BY aptNm, sggCd
                 LIMIT ?
             """, (limit,)).fetchall()
 
-        log.info("POI 수집 대상: %d개 단지", len(apts))
+        total = len(apts)
+        log.info("POI 수집 대상: %d개 단지", total)
         results = []
-        for apt_nm, sgg_cd, lat, lng in apts:
+        for i, (apt_nm, sgg_cd, umd_nm) in enumerate(apts, 1):
             try:
-                r = self.collect_poi(str(apt_nm), str(sgg_cd), float(lat), float(lng))
-                results.append(r)
+                coord = self._get_coord_by_keyword(str(apt_nm), str(umd_nm or ""))
+                if coord is None:
+                    log.debug("좌표 없음 스킵: %s %s", apt_nm, umd_nm)
+                    continue
+                lat, lng = coord
+                r = self.collect_poi(str(apt_nm), str(sgg_cd), lat, lng)
+                if r:
+                    results.append(r)
             except Exception as e:
                 log.warning("POI 수집 실패 [%s]: %s", apt_nm, e)
+            if i % 500 == 0:
+                log.info("진행: %d/%d (%.1f%%)", i, total, i/total*100)
         log.info("POI 수집 완료: %d건", len(results))
         return results
 

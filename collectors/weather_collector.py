@@ -172,7 +172,10 @@ class WeatherCollector:
         log.info("weather_anomaly 저장: %d건", inserted)
         return inserted
 
-    def collect_all(self, start_date: str = "20230101") -> dict:
+    def collect_all(self, start_date: str = None) -> dict:
+        # API 제한: 오늘 기준 6일 이내만 조회 가능
+        if start_date is None:
+            start_date = (datetime.now() - timedelta(days=6)).strftime("%Y%m%d")
         warnings = self.collect_warnings(start_date)
         scores   = self.build_risk_scores()
         return {"warnings": warnings, "risk_scores": scores}

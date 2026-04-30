@@ -20,14 +20,31 @@ import requests
 
 log = logging.getLogger(__name__)
 
-BASE_URL = "https://kosis.kr/openapi/statisticsData.do"
+BASE_URL = "https://kosis.kr/openapi/Param/statisticsParameterData.do"
 
-# KOSIS 통계표 코드 (고정)
+# KOSIS 통계표 코드
+# objL 값은 KOSIS 웹 "통계자료 → URL보기"로 확인한 실제 파라미터
 STAT_CODES = {
-    "population":  {"orgId": "101", "tblId": "DT_1B040A3", "itmId": "T20", "objL1": "ALL", "objL2": "ALL"},
-    "household":   {"orgId": "101", "tblId": "DT_1JC1516", "itmId": "T1",  "objL1": "ALL"},
-    "employment":  {"orgId": "101", "tblId": "DT_1DE7126T", "itmId": "T10", "objL1": "ALL"},
-    "income":      {"orgId": "402", "tblId": "DT_402001N01", "itmId": "T10", "objL1": "ALL"},
+    "population": {
+        "orgId": "101", "tblId": "DT_1B040A3",
+        "itmId": "ALL", "objL1": "ALL",           # 시군구별 인구 (objL2 없음)
+    },
+    "household": {
+        "orgId": "101", "tblId": "DT_1JC1516",
+        "itmId": "ALL", "objL2": "ALL0",  # 총세대수(계), objL1=시도별 분할
+        "sido_split": [
+            "11","21","22","23","24","25","26","29",  # 서울~세종
+            "31","32","33","34","35","36","37","38","39",  # 경기~제주
+        ],
+    },
+    "employment": {
+        "orgId": "101", "tblId": "DT_1DA7004S",
+        "itmId": "ALL", "objL1": "ALL",           # 시도별 경제활동인구
+    },
+    "income": {
+        "orgId": "101", "tblId": "DT_1C96",
+        "itmId": "ALL", "objL1": "ALL",           # 시도별 1인당 GRDP
+    },
 }
 
 DDL = {
@@ -72,7 +89,7 @@ DDL = {
 
 class KosisCollector:
     def __init__(self, api_key: str = "", db_path: str = "realestate.db"):
-        self.api_key  = api_key or os.getenv("KOSIS_API_KEY", "")
+        self.api_key = api_key or os.getenv("KOSIS_API_KEY", "")
         self.db_path  = db_path
         self.session  = requests.Session()
         self.session.headers.update({"User-Agent": "RealEstate-Collector/1.0"})
@@ -83,37 +100,49 @@ class KosisCollector:
             for ddl in DDL.values():
                 conn.execute(ddl)
 
-    def _fetch(self, stat_key: str, start_year: int = 2020, end_year: int = 2024) -> list[dict]:
+    def _fetch(self, stat_key: str, start_year: int = 2020, end_year: int = None) -> list[dict]:
         if not self.api_key:
             log.warning("KOSIS_API_KEY 없음 — 수집 스킵")
             return []
+        from datetime import date
+        if end_year is None:
+            end_year = date.today().year
         code = STAT_CODES[stat_key]
-        # userStatsId = apiKey/orgId/tblId/분류수/시작년도/종료년도/itmId/분류1/분류2
-        obj_cnt = sum(1 for k in code if k.startswith("objL"))
-        obj_vals = "/".join(code[f"objL{i+1}"] for i in range(obj_cnt))
-        user_stats_id = (f"{self.api_key}/{code['orgId']}/{code['tblId']}"
-                         f"/{obj_cnt}/{start_year}/{end_year}/{code['itmId']}/{obj_vals}")
-        params = {
-            "method":      "getList",
-            "apiKey":      self.api_key,
-            "format":      "json",
-            "jsonVD":      "Y",
-            "userStatsId": user_stats_id,
-        }
-        try:
-            resp = self.session.get(BASE_URL, params=params, timeout=30)
-            resp.raise_for_status()
-            text = resp.text.strip()
-            if not text:
-                log.warning("KOSIS %s 빈 응답 — API 서비스 활성화 필요 (kosis.kr → 마이페이지 → OpenAPI → 서비스신청)", stat_key)
-                return []
-            data = resp.json()
-            if isinstance(data, list):
-                return data
-            log.warning("KOSIS %s 응답 오류: %s", stat_key, str(data)[:200])
-        except Exception as e:
-            log.error("KOSIS %s 수집 실패: %s", stat_key, e)
-        return []
+        # 40000셀 초과 방지: 연도별 × 시도별 분할 수집 (household는 데이터량이 많아 필요)
+        sido_codes = code.get("sido_split", [None])  # None이면 ALL로 한 번에
+        all_rows: list[dict] = []
+        for year in range(start_year, end_year + 1):
+            for sido in sido_codes:
+                params = {
+                    "method":      "getList",
+                    "apiKey":      self.api_key,
+                    "format":      "json",
+                    "jsonVD":      "Y",
+                    "orgId":       code["orgId"],
+                    "tblId":       code["tblId"],
+                    "prdSe":       "Y",
+                    "startPrdDe":  str(year),
+                    "endPrdDe":    str(year),
+                    "itmId":       code["itmId"],
+                    "objL1":       sido if sido else code.get("objL1", "ALL"),
+                }
+                if "objL2" in code:
+                    params["objL2"] = code["objL2"]
+                try:
+                    resp = self.session.get(BASE_URL, params=params, timeout=30)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if isinstance(data, list):
+                        all_rows.extend(data)
+                    elif isinstance(data, dict) and data.get("err") == "30":
+                        log.debug("KOSIS %s %d %s — 데이터 없음", stat_key, year, sido)
+                    else:
+                        log.warning("KOSIS %s %d %s 오류: %s", stat_key, year, sido, str(data)[:150])
+                except Exception as e:
+                    log.error("KOSIS %s %d 수집 실패: %s", stat_key, year, e)
+                time.sleep(0.3)
+        log.info("KOSIS %s 원본 %d건 수집", stat_key, len(all_rows))
+        return all_rows
 
     def collect_population(self, start_year: int = 2020):
         rows = self._fetch("population", start_year)
