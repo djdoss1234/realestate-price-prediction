@@ -1,5 +1,11 @@
 # Database
 realestate.db
+realestate.db.bak
+*.db-journal
+*.db-shm
+*.db-wal
+realestate 2.db
+realestate 2.db-journal
 
 # API Keys
 .env
@@ -20,8 +26,12 @@ __pycache__/
 # SHAP / plots
 *.png
 
+# Duplicate / scratch files
+security 2.py
+
 # Logs
 *.log
+logs/
 
 # macOS
 .DS_Store
