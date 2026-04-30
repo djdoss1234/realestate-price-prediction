@@ -126,6 +126,42 @@ def run_crime():
     return result
 
 
+def run_apt_complex_identity():
+    from collectors.apt_complex_identity_collector import AptComplexIdentityCollector
+    log.info("=== 공동주택 단지식별정보 수집 시작 ===")
+    c = AptComplexIdentityCollector()
+    result = c.collect_all()
+    log.info("단지식별 완료: %s", result)
+    return result
+
+
+def run_school():
+    from collectors.school_collector import SchoolCollector
+    log.info("=== 학교 수집 시작 ===")
+    c = SchoolCollector()
+    result = c.collect_all()
+    log.info("학교 완료: %s", result)
+    return result
+
+
+def run_land_price():
+    from collectors.land_price_collector import LandPriceCollector
+    log.info("=== 공시지가 수집 시작 ===")
+    c = LandPriceCollector()
+    result = c.collect_all_sgg(base_year=2024)
+    log.info("공시지가 완료: %s", result)
+    return result
+
+
+def run_unsold_house():
+    from collectors.unsold_house_collector import UnsoldHouseCollector
+    log.info("=== 미분양주택현황 수집 시작 ===")
+    c = UnsoldHouseCollector()
+    result = c.collect_range(start_ym="202001")
+    log.info("미분양 완료: %s", result)
+    return result
+
+
 def run_kakao(limit: int = 5000):
     from collectors.kakao_poi_collector import KakaoPOICollector
     log.info("=== Kakao POI 수집 시작 (최대 %d건) ===", limit)
@@ -171,6 +207,18 @@ if __name__ == "__main__":
 
     if target in ("crime", "all"):
         run_crime()
+
+    if target in ("apt_identity", "all"):
+        run_apt_complex_identity()
+
+    if target in ("school", "all"):
+        run_school()
+
+    if target in ("land_price", "all"):
+        run_land_price()
+
+    if target in ("unsold", "all"):
+        run_unsold_house()
 
     if target in ("kakao", "all"):
         run_kakao(limit=limit)

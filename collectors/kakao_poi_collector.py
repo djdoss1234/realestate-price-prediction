@@ -154,12 +154,18 @@ class KakaoPOICollector:
         return None
 
     def collect_from_db(self, limit: int = 1000):
-        """apt_trade DB에서 단지 목록을 가져와 Kakao 키워드 검색으로 좌표 취득 후 POI 수집"""
+        """apt_trade DB에서 단지 목록을 가져와 Kakao 키워드 검색으로 좌표 취득 후 POI 수집.
+        미수집 단지 + 카테고리 데이터가 모두 0인 단지(쿼터 초과로 실패한 것) 재수집."""
         with sqlite3.connect(self.db_path) as conn:
             apts = conn.execute("""
                 SELECT DISTINCT aptNm, sggCd, umdNm
                 FROM apt_trade
-                WHERE aptNm NOT IN (SELECT apt_nm FROM kakao_poi)
+                WHERE aptNm NOT IN (
+                    SELECT apt_nm FROM kakao_poi
+                    WHERE subway_cnt > 0 OR elem_school_cnt > 0
+                       OR supermarket_cnt > 0 OR convenience_cnt > 0
+                       OR hospital_cnt > 0
+                )
                 GROUP BY aptNm, sggCd
                 LIMIT ?
             """, (limit,)).fetchall()
