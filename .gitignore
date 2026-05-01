@@ -26,8 +26,13 @@ __pycache__/
 # SHAP / plots
 *.png
 
-# Duplicate / scratch files
-security 2.py
+# Duplicate / scratch files (macOS Finder 복사본)
+*\ 2.*
+*\ [3-9].*
+
+# Airflow
+airflow_home/
+venv_airflow/
 
 # Logs
 *.log

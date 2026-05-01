@@ -188,7 +188,16 @@ def _to_float(v) -> Optional[float]:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    import os; os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import os
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    os.chdir(base)
+    env_path = os.path.join(base, ".env")
+    if os.path.exists(env_path):
+        with open(env_path) as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line and not _line.startswith("#") and "=" in _line:
+                    _k, _v = _line.split("=", 1)
+                    os.environ.setdefault(_k.strip(), _v.strip())
     c = CommercialDistrictCollector()
-    # 강남역 반경 500m 테스트
-    print(c.collect_around_point(127.027, 37.499, radius=500))
+    c.collect_all()
