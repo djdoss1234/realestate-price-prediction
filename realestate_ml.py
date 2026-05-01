@@ -770,7 +770,7 @@ class FeatureEngineer:
 
 try:
     import lightgbm as lgb
-    from sklearn.model_selection import KFold
+    from sklearn.model_selection import TimeSeriesSplit
     from sklearn.metrics import mean_absolute_error, r2_score
     HAS_LGB = True
 except ImportError:
@@ -804,7 +804,9 @@ class RealEstatePriceModel:
         if not HAS_LGB:
             raise ImportError("pip install lightgbm")
 
-        kf   = KFold(n_splits=self.config.n_folds, shuffle=True, random_state=42)
+        # TimeSeriesSplit: 과거→미래 방향으로만 검증 (데이터 누수 방지)
+        # X는 호출 전 날짜 오름차순 정렬 상태여야 함
+        kf   = TimeSeriesSplit(n_splits=self.config.n_folds)
         oof  = np.zeros(len(X))
         imps = np.zeros(len(X.columns))
         maes = []
