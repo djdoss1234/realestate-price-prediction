@@ -647,6 +647,28 @@ class FeatureEngineer:
         trade_df.drop(columns=["avg_deposit", "overall_deposit"], errors="ignore", inplace=True)
         return trade_df
 
+    def remove_outliers_iqr(self, df: pd.DataFrame, price_col: str,
+                            iqr_mult: float = 3.0) -> pd.DataFrame:
+        """단지+면적구간별 IQR×iqr_mult 범위 밖 이상치 제거.
+        그룹 거래건수 < 5이면 전체 분포 기준 적용."""
+        before = len(df)
+        global_q1 = df[price_col].quantile(0.25)
+        global_q3 = df[price_col].quantile(0.75)
+        global_iqr = global_q3 - global_q1
+
+        def _mask(grp):
+            if len(grp) < 5:
+                lo, hi = global_q1 - iqr_mult * global_iqr, global_q3 + iqr_mult * global_iqr
+            else:
+                q1, q3 = grp[price_col].quantile(0.25), grp[price_col].quantile(0.75)
+                iqr = q3 - q1
+                lo, hi = q1 - iqr_mult * iqr, q3 + iqr_mult * iqr
+            return grp[grp[price_col].between(lo, hi)]
+
+        df = df.groupby(["단지명", "면적구간"], group_keys=False).apply(_mask)
+        print(f"  이상치 제거: {before:,} → {len(df):,}건 (-{before - len(df):,}건)")
+        return df.reset_index(drop=True)
+
     def build_all_trade(self, trade_df: pd.DataFrame,
                         rent_df: Optional[pd.DataFrame] = None,
                         rates_df: Optional[pd.DataFrame] = None,
@@ -655,6 +677,7 @@ class FeatureEngineer:
         """매매 데이터 전체 피처 엔지니어링 (apt+villa 통합)"""
         print("\n[1/6] 데이터 정제...")
         df = self.clean_trade(trade_df)
+        df = self.remove_outliers_iqr(df, "dealAmount")
         print(f"  정제 후: {len(df):,}건")
         print("[2/6] 기본 피처 생성...")
         df = self.build_brand_feature(df)
@@ -682,6 +705,7 @@ class FeatureEngineer:
         print("\n[1/6] 데이터 정제...")
         df = self.clean_rent(rent_df)
         df = df[df["월세"] == 0].copy()
+        df = self.remove_outliers_iqr(df, "보증금")
         print(f"  정제 후 전세: {len(df):,}건")
         print("[2/6] 기본 피처 생성...")
         df = self.build_brand_feature(df)
@@ -705,6 +729,7 @@ class FeatureEngineer:
         df = self.clean_rent(rent_df)
         df = df[df["월세"] > 0].copy()
         df["거래금액"] = df["월세"]
+        df = self.remove_outliers_iqr(df, "월세")
         print(f"  정제 후 월세: {len(df):,}건")
         print("[2/6] 기본 피처 생성...")
         df = self.build_brand_feature(df)
@@ -951,6 +976,259 @@ class SHAPAnalyzer:
             print(f"  저장: {path}")
         except Exception as e:
             print(f"  Dependence plot 오류: {e}")
+
+
+# ============================================================
+# SECTION 5-B. Walk-Forward Validator
+# ============================================================
+
+class WalkForwardValidator:
+    """연도별 확장 윈도우 검증 — 실제 미래 예측 성능 측정.
+
+    사용법:
+        wfv = WalkForwardValidator(min_train_years=3)
+        report = wfv.validate(df, X, y, "거래년도")
+        wfv.print_report(report)
+    """
+
+    def __init__(self, min_train_years: int = 3):
+        self.min_train_years = min_train_years
+
+    def validate(self, df: pd.DataFrame, X: pd.DataFrame, y: pd.Series,
+                 year_col: str = "거래년도") -> list[dict]:
+        if not HAS_LGB:
+            raise ImportError("pip install lightgbm scikit-learn")
+
+        years = sorted(df[year_col].dropna().unique().astype(int))
+        if len(years) < self.min_train_years + 1:
+            print(f"  [경고] 데이터 연도 부족 ({years}), Walk-Forward 불가")
+            return []
+
+        results = []
+        test_years = years[self.min_train_years:]
+
+        for test_year in test_years:
+            train_mask = df[year_col].astype(int) < test_year
+            test_mask  = df[year_col].astype(int) == test_year
+
+            if train_mask.sum() < 1000 or test_mask.sum() < 100:
+                continue
+
+            X_tr, y_tr = X[train_mask].reset_index(drop=True), y[train_mask].reset_index(drop=True)
+            X_te, y_te = X[test_mask].reset_index(drop=True),  y[test_mask].reset_index(drop=True)
+
+            model = RealEstatePriceModel()
+            # Walk-forward는 단일 분할 → n_folds=1 로 간소화
+            preds = self._train_and_predict(X_tr, y_tr, X_te)
+
+            mae  = mean_absolute_error(y_te, preds)
+            rmse = float(np.sqrt(((y_te - preds) ** 2).mean()))
+            r2   = float(r2_score(y_te, preds))
+            mape = float((np.abs((y_te - preds) / y_te.replace(0, np.nan))).mean() * 100)
+
+            results.append({
+                "test_year":  test_year,
+                "train_size": int(train_mask.sum()),
+                "test_size":  int(test_mask.sum()),
+                "mae":        round(mae, 1),
+                "rmse":       round(rmse, 1),
+                "r2":         round(r2, 4),
+                "mape":       round(mape, 2),
+            })
+            print(f"  [{test_year}] MAE {mae:,.0f}만원  RMSE {rmse:,.0f}만원  R² {r2:.4f}  MAPE {mape:.1f}%  (test {test_mask.sum():,}건)")
+
+        return results
+
+    def _train_and_predict(self, X_tr, y_tr, X_te) -> np.ndarray:
+        params = {
+            "objective": "regression", "metric": "mae",
+            "learning_rate": 0.05, "num_leaves": 127,
+            "min_data_in_leaf": 50, "feature_fraction": 0.8,
+            "bagging_fraction": 0.8, "bagging_freq": 1,
+            "lambda_l1": 0.1, "lambda_l2": 0.1, "verbose": -1,
+        }
+        dtrain = lgb.Dataset(X_tr, label=y_tr)
+        model  = lgb.train(params, dtrain, num_boost_round=500,
+                           callbacks=[lgb.log_evaluation(-1)])
+        return model.predict(X_te)
+
+    @staticmethod
+    def print_report(results: list[dict], label: str = "") -> None:
+        if not results:
+            return
+        header = f"Walk-Forward 검증 결과{' — ' + label if label else ''}"
+        print(f"\n  {'=' * 60}")
+        print(f"  {header}")
+        print(f"  {'=' * 60}")
+        print(f"  {'연도':>6}  {'학습':>8}  {'검증':>7}  {'MAE':>10}  {'R²':>7}  {'MAPE':>7}")
+        print(f"  {'─' * 56}")
+        for r in results:
+            print(f"  {r['test_year']:>6}  {r['train_size']:>8,}  {r['test_size']:>7,}"
+                  f"  {r['mae']:>8,.0f}만  {r['r2']:>7.4f}  {r['mape']:>6.1f}%")
+        maes = [r["mae"] for r in results]
+        r2s  = [r["r2"]  for r in results]
+        print(f"  {'─' * 56}")
+        print(f"  {'평균':>6}  {'':>8}  {'':>7}  {np.mean(maes):>8,.0f}만  {np.mean(r2s):>7.4f}")
+        print(f"  {'=' * 60}\n")
+
+
+# ============================================================
+# SECTION 5-C. Quantile 예측 모델 (신뢰구간)
+# ============================================================
+
+class QuantilePriceModel:
+    """LightGBM quantile regression — 10%/50%/90% 분위 예측.
+
+    사용법:
+        qm = QuantilePriceModel()
+        qm.train(X, y)
+        lower, median, upper = qm.predict_interval(X_new)
+        # "예측가 5억 (4.7억 ~ 5.3억, 80% 신뢰구간)"
+    """
+
+    QUANTILES = [0.1, 0.5, 0.9]
+
+    def __init__(self, n_folds: int = 5):
+        self.n_folds = n_folds
+        self.fold_models: dict[float, list] = {q: [] for q in self.QUANTILES}
+        self.feature_names: list[str] = []
+
+    def train(self, X: pd.DataFrame, y: pd.Series) -> dict:
+        if not HAS_LGB:
+            raise ImportError("pip install lightgbm scikit-learn")
+
+        self.feature_names = list(X.columns)
+        tss    = TimeSeriesSplit(n_splits=self.n_folds)
+        oof_50 = np.zeros(len(X))
+        results = {}
+
+        base_params = {
+            "metric": "quantile", "learning_rate": 0.05,
+            "num_leaves": 127, "min_data_in_leaf": 50,
+            "feature_fraction": 0.8, "bagging_fraction": 0.8,
+            "bagging_freq": 1, "lambda_l1": 0.1, "lambda_l2": 0.1,
+            "verbose": -1,
+        }
+
+        for q in self.QUANTILES:
+            params = {**base_params, "objective": "quantile", "alpha": q}
+            for fold, (tr_idx, val_idx) in enumerate(tss.split(X)):
+                X_tr, X_val = X.iloc[tr_idx], X.iloc[val_idx]
+                y_tr, y_val = y.iloc[tr_idx], y.iloc[val_idx]
+                dtrain = lgb.Dataset(X_tr, label=y_tr)
+                model  = lgb.train(params, dtrain, num_boost_round=500,
+                                   callbacks=[lgb.log_evaluation(-1)])
+                self.fold_models[q].append(model)
+                if q == 0.5:
+                    oof_50[val_idx] = model.predict(X_val)
+
+        mae = mean_absolute_error(y, oof_50)
+        r2  = r2_score(y, oof_50)
+        # 커버리지: 실제값이 [10%, 90%] 구간 안에 드는 비율
+        lo  = np.mean([m.predict(X) for m in self.fold_models[0.1]], axis=0)
+        hi  = np.mean([m.predict(X) for m in self.fold_models[0.9]], axis=0)
+        coverage = float(((y >= lo) & (y <= hi)).mean() * 100)
+
+        print(f"\n  ── Quantile 모델 결과 ──────────────────")
+        print(f"  중앙값(50%) MAE : {mae:,.0f}만원  R² : {r2:.4f}")
+        print(f"  80% 구간 커버리지: {coverage:.1f}%  (목표 ≥ 80%)")
+        results = {"mae": round(mae, 1), "r2": round(r2, 4), "coverage_80pct": round(coverage, 1)}
+        return results
+
+    def predict_interval(self, X: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(lower_10, median_50, upper_90) 반환"""
+        def _avg(q):
+            return np.mean([m.predict(X) for m in self.fold_models[q]], axis=0)
+        return _avg(0.1), _avg(0.5), _avg(0.9)
+
+
+# ============================================================
+# SECTION 5-D. 저평가 탐지 백테스트
+# ============================================================
+
+def backtest_undervalued(df: pd.DataFrame, feature_cols: list,
+                         target_col: str, year_col: str = "거래년도",
+                         gap_threshold: float = -10.0,
+                         min_train_years: int = 3) -> pd.DataFrame:
+    """저평가 탐지 정밀도 백테스트.
+
+    pred_year에 저평가 탐지 → check_year(+1년)에 같은 단지 실거래가 상승 여부 확인.
+    Precision = 탐지 건 중 실제 상승한 단지 비율.
+
+    Returns: 연도별 Precision/Recall 요약 DataFrame
+    """
+    if not HAS_LGB:
+        raise ImportError("pip install lightgbm scikit-learn")
+
+    years     = sorted(df[year_col].dropna().unique().astype(int))
+    test_years = years[min_train_years:-1]  # 마지막 연도는 check_year 없음
+    records   = []
+
+    for pred_year in test_years:
+        check_year = pred_year + 1
+        if check_year not in years:
+            continue
+
+        train_mask = df[year_col].astype(int) < pred_year
+        pred_mask  = df[year_col].astype(int) == pred_year
+        check_mask = df[year_col].astype(int) == check_year
+
+        if train_mask.sum() < 500 or pred_mask.sum() < 50:
+            continue
+
+        avail = [c for c in feature_cols if c in df.columns]
+        X_tr = df[train_mask][avail].apply(pd.to_numeric, errors="coerce").fillna(df[train_mask][avail].median())
+        y_tr = df[train_mask][target_col]
+        X_pr = df[pred_mask][avail].apply(pd.to_numeric, errors="coerce").fillna(X_tr.median())
+
+        params = {
+            "objective": "regression", "metric": "mae", "learning_rate": 0.05,
+            "num_leaves": 127, "min_data_in_leaf": 50, "feature_fraction": 0.8,
+            "bagging_fraction": 0.8, "bagging_freq": 1,
+            "lambda_l1": 0.1, "lambda_l2": 0.1, "verbose": -1,
+        }
+        model = lgb.train(params, lgb.Dataset(X_tr, label=y_tr),
+                          num_boost_round=300, callbacks=[lgb.log_evaluation(-1)])
+
+        preds  = model.predict(X_pr)
+        actual = df[pred_mask][target_col].values
+        gaps   = (actual - preds) / np.where(preds > 0, preds, np.nan) * 100
+
+        undervalued_mask = gaps < gap_threshold
+        uv_complexes = set(df[pred_mask][undervalued_mask]["단지명"].unique())
+        total_uv     = len(uv_complexes)
+
+        if total_uv == 0:
+            continue
+
+        # check_year에 같은 단지의 평균가 비교
+        check_df = df[check_mask].copy()
+        pred_avg = (df[pred_mask].groupby("단지명")[target_col].mean()
+                    .rename("pred_year_avg"))
+        check_avg = (check_df.groupby("단지명")[target_col].mean()
+                     .rename("check_year_avg"))
+        compare = pred_avg.to_frame().join(check_avg, how="inner")
+        compare = compare[compare.index.isin(uv_complexes)]
+        compare["상승여부"] = compare["check_year_avg"] > compare["pred_year_avg"]
+
+        precision = float(compare["상승여부"].mean() * 100) if len(compare) > 0 else 0.0
+        matched   = len(compare)
+
+        records.append({
+            "pred_year":     pred_year,
+            "check_year":    check_year,
+            "탐지_단지수":    total_uv,
+            "검증_가능단지":  matched,
+            "Precision(%)":  round(precision, 1),
+            "gap_threshold":  gap_threshold,
+        })
+        print(f"  [{pred_year}→{check_year}] 저평가 {total_uv}개 단지 탐지  "
+              f"검증가능 {matched}개  Precision {precision:.1f}%")
+
+    result_df = pd.DataFrame(records)
+    if not result_df.empty:
+        print(f"\n  평균 Precision: {result_df['Precision(%)'].mean():.1f}%")
+    return result_df
 
 
 # ============================================================
@@ -1401,17 +1679,118 @@ def run_pipeline(db_path: str = "realestate.db",
 if __name__ == "__main__":
     import sys
 
-    # python realestate_ml.py [sample_n] [start_ym] [modes]
-    # 예) python realestate_ml.py           ← 전체, 3모델 모두
-    #     python realestate_ml.py 200000    ← 샘플, 3모델
-    #     python realestate_ml.py 0 202301 매매   ← 매매 모델만
+    # 실행 모드
+    # python realestate_ml.py                        ← 전체 학습 (3모델)
+    # python realestate_ml.py 200000                 ← 샘플 학습
+    # python realestate_ml.py 0 202301 매매          ← 매매 모델만
+    # python realestate_ml.py 0 202001 wfv           ← Walk-Forward 검증
+    # python realestate_ml.py 0 202001 backtest      ← 저평가 백테스트
+    # python realestate_ml.py 0 202001 quantile      ← Quantile 신뢰구간 모델
+
     sample_n = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1] != "0" else None
     start_ym = sys.argv[2] if len(sys.argv) > 2 else "202301"
     modes    = tuple(sys.argv[3:]) if len(sys.argv) > 3 else ("매매", "전세", "월세")
 
-    run_pipeline(
-        db_path="realestate.db",
-        sample_n=sample_n,
-        start_ym=start_ym,
-        modes=modes,
-    )
+    # ── Walk-Forward Validation ──────────────────────────────
+    if "wfv" in modes:
+        print("\n" + "=" * 60)
+        print("  Walk-Forward Validation (매매 모델)")
+        print("=" * 60)
+        loader = DBLoader("realestate.db")
+        fe     = FeatureEngineer()
+        rates_df = fetch_macro_rates(start_ym="202001")
+        try:
+            pop_df, aca_df = loader.load_sgg_features()
+        except Exception:
+            pop_df, aca_df = pd.DataFrame(), pd.DataFrame()
+
+        trade_df   = loader.load_trade(limit=sample_n)
+        rent_n     = (sample_n * 3) if sample_n else None
+        villa_rent = loader.load_villa_rent(limit=rent_n)
+        apt_rent   = loader.load_rent(limit=rent_n)
+        rent_df    = pd.concat([apt_rent, villa_rent], ignore_index=True) if not villa_rent.empty else apt_rent
+
+        df = fe.build_all_trade(trade_df, rent_df, rates_df, pop_df, aca_df)
+        X, medians, available = _prepare_X(df, TRADE_FEATURE_COLS)
+        y = df["거래금액"]
+        valid = y.notna() & (y > 0)
+        X, y = X[valid].reset_index(drop=True), y[valid].reset_index(drop=True)
+        df_valid = df[valid].reset_index(drop=True)
+
+        wfv = WalkForwardValidator(min_train_years=3)
+        report = wfv.validate(df_valid, X, y, "거래년도")
+        WalkForwardValidator.print_report(report, "매매")
+
+    # ── 저평가 백테스트 ──────────────────────────────────────
+    elif "backtest" in modes:
+        print("\n" + "=" * 60)
+        print("  저평가 탐지 백테스트 (매매 모델)")
+        print("=" * 60)
+        loader = DBLoader("realestate.db")
+        fe     = FeatureEngineer()
+        rates_df = fetch_macro_rates(start_ym="202001")
+        try:
+            pop_df, aca_df = loader.load_sgg_features()
+        except Exception:
+            pop_df, aca_df = pd.DataFrame(), pd.DataFrame()
+
+        trade_df = loader.load_trade(limit=sample_n)
+        rent_n   = (sample_n * 3) if sample_n else None
+        apt_rent = loader.load_rent(limit=rent_n)
+        villa_rent = loader.load_villa_rent(limit=rent_n)
+        rent_df  = pd.concat([apt_rent, villa_rent], ignore_index=True) if not villa_rent.empty else apt_rent
+
+        df = fe.build_all_trade(trade_df, rent_df, rates_df, pop_df, aca_df)
+        valid = df["거래금액"].notna() & (df["거래금액"] > 0)
+        df = df[valid].reset_index(drop=True)
+
+        result = backtest_undervalued(
+            df, TRADE_FEATURE_COLS, "거래금액",
+            year_col="거래년도", gap_threshold=-10.0, min_train_years=3,
+        )
+        if not result.empty:
+            print("\n" + result.to_string(index=False))
+
+    # ── Quantile 신뢰구간 모델 ───────────────────────────────
+    elif "quantile" in modes:
+        print("\n" + "=" * 60)
+        print("  Quantile 예측 모델 학습 (매매 모델)")
+        print("=" * 60)
+        loader = DBLoader("realestate.db")
+        fe     = FeatureEngineer()
+        rates_df = fetch_macro_rates(start_ym=start_ym)
+        try:
+            pop_df, aca_df = loader.load_sgg_features()
+        except Exception:
+            pop_df, aca_df = pd.DataFrame(), pd.DataFrame()
+
+        trade_df = loader.load_trade(limit=sample_n)
+        rent_n   = (sample_n * 3) if sample_n else None
+        apt_rent = loader.load_rent(limit=rent_n)
+        villa_rent = loader.load_villa_rent(limit=rent_n)
+        rent_df  = pd.concat([apt_rent, villa_rent], ignore_index=True) if not villa_rent.empty else apt_rent
+
+        df = fe.build_all_trade(trade_df, rent_df, rates_df, pop_df, aca_df)
+        X, medians, available = _prepare_X(df, TRADE_FEATURE_COLS)
+        y = df["거래금액"]
+        valid = y.notna() & (y > 0)
+        X, y = X[valid].reset_index(drop=True), y[valid].reset_index(drop=True)
+
+        qm = QuantilePriceModel(n_folds=5)
+        metrics = qm.train(X, y)
+        print(f"\n  80% 신뢰구간 커버리지: {metrics['coverage_80pct']}%")
+        print("  → api.py에서 /predict 엔드포인트에 신뢰구간 추가 가능")
+
+        import pickle
+        with open("pipeline_quantile_trade.pkl", "wb") as f:
+            pickle.dump({"model": qm, "medians": medians, "features": available}, f)
+        print("  저장: pipeline_quantile_trade.pkl")
+
+    # ── 일반 학습 ────────────────────────────────────────────
+    else:
+        run_pipeline(
+            db_path="realestate.db",
+            sample_n=sample_n,
+            start_ym=start_ym,
+            modes=modes,
+        )
