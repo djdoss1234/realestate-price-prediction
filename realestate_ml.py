@@ -670,7 +670,7 @@ class FeatureEngineer:
         print("[5/6] 금리 피처 병합...")
         df = self.build_rate_feature(df, rates_df)
         print("[6/6] 시도·시군구 외부 피처 병합...")
-        df = self.build_sgg_external(df, pop_df or pd.DataFrame(), aca_df or pd.DataFrame())
+        df = self.build_sgg_external(df, pop_df if pop_df is not None else pd.DataFrame(), aca_df if aca_df is not None else pd.DataFrame())
         print("  피처 엔지니어링 완료.")
         return df
 
@@ -692,7 +692,7 @@ class FeatureEngineer:
         print("[4/6] 금리 피처 병합...")
         df = self.build_rate_feature(df, rates_df)
         print("[5/6] 시도·시군구 외부 피처 병합...")
-        df = self.build_sgg_external(df, pop_df or pd.DataFrame(), aca_df or pd.DataFrame())
+        df = self.build_sgg_external(df, pop_df if pop_df is not None else pd.DataFrame(), aca_df if aca_df is not None else pd.DataFrame())
         print("[6/6] 피처 엔지니어링 완료.")
         return df
 
@@ -715,7 +715,7 @@ class FeatureEngineer:
         print("[4/6] 금리 피처 병합...")
         df = self.build_rate_feature(df, rates_df)
         print("[5/6] 시도·시군구 외부 피처 병합...")
-        df = self.build_sgg_external(df, pop_df or pd.DataFrame(), aca_df or pd.DataFrame())
+        df = self.build_sgg_external(df, pop_df if pop_df is not None else pd.DataFrame(), aca_df if aca_df is not None else pd.DataFrame())
         print("[6/6] 피처 엔지니어링 완료.")
         return df
 
