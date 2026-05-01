@@ -18,6 +18,7 @@ import logging
 import os
 import sqlite3
 import time
+import xml.etree.ElementTree as ET
 from typing import Optional
 
 import requests
@@ -37,8 +38,8 @@ CREATE TABLE IF NOT EXISTS commercial_district (
     indsSclsNm   TEXT,
     signguCd     TEXT,
     signguNm     TEXT,
-    adongCd      TEXT,
-    adongNm      TEXT,
+    ldongCd      TEXT,
+    ldongNm      TEXT,
     rdnmAdr      TEXT,
     lnoAdr       TEXT,
     lat          REAL,
@@ -73,21 +74,21 @@ class CommercialDistrictCollector:
                     "cy":         cy,
                     "radius":     radius,
                     "pageNo":     page,
-                    "pageSize":   page_size,
-                    "type":       "json",
+                    "numOfRows":  page_size,
                 }, timeout=30)
                 if resp.status_code == 429:
-                    wait = 10 * (2 ** attempt)  # 10, 20, 40, 80, 160s
+                    wait = 10 * (2 ** attempt)
                     log.warning("상가정보 429 — %d초 대기 후 재시도 (%d/5)", wait, attempt + 1)
                     time.sleep(wait)
                     continue
                 resp.raise_for_status()
-                body = resp.json().get("body", {})
-                total = int(body.get("totalCount", 0))
-                items = body.get("items", [])
-                if isinstance(items, dict):
-                    items = [items]
-                return items or [], total
+                root = ET.fromstring(resp.text)
+                total = int(root.findtext(".//totalCount") or 0)
+                items = []
+                for item in root.findall(".//item"):
+                    row = {child.tag: (child.text or "").strip() for child in item}
+                    items.append(row)
+                return items, total
             except Exception as e:
                 log.error("상가정보 API 오류 [%.4f,%.4f]: %s", cx, cy, e)
                 return [], 0
@@ -109,7 +110,7 @@ class CommercialDistrictCollector:
                             INSERT OR REPLACE INTO commercial_district
                             (bizesId, bizesNm, brchNm, indsLclsCd, indsLclsNm,
                              indsMclsNm, indsSclsNm, signguCd, signguNm,
-                             adongCd, adongNm, rdnmAdr, lnoAdr, lat, lon)
+                             ldongCd, ldongNm, rdnmAdr, lnoAdr, lat, lon)
                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         """, (
                             r.get("bizesId"),
@@ -121,16 +122,16 @@ class CommercialDistrictCollector:
                             r.get("indsSclsNm"),
                             r.get("signguCd"),
                             r.get("signguNm"),
-                            r.get("adongCd"),
-                            r.get("adongNm"),
+                            r.get("ldongCd"),
+                            r.get("ldongNm"),
                             r.get("rdnmAdr"),
                             r.get("lnoAdr"),
                             _to_float(r.get("lat")),
                             _to_float(r.get("lon")),
                         ))
                         inserted += 1
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("상가 INSERT 오류: %s", e)
             time.sleep(0.2)
         return inserted
 

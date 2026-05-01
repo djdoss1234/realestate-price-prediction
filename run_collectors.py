@@ -146,10 +146,10 @@ def run_school():
 
 def run_land_price():
     from collectors.land_price_collector import LandPriceCollector
-    log.info("=== 공시지가 수집 시작 ===")
+    log.info("=== 공시지가(거래가 프록시) 수집 시작 ===")
     c = LandPriceCollector()
-    result = c.collect_all_sgg(base_year=2024)
-    log.info("공시지가 완료: %s", result)
+    result = c.build_from_transactions(start_year=2020)
+    log.info("공시지가 완료: %s건", result)
     return result
 
 

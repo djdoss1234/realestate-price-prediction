@@ -165,6 +165,37 @@ class LandPriceCollector:
                 """, (sgg_cd, base_year, round(avg_price, 0) if avg_price else None, cnt))
         log.info("land_price_sgg_avg 집계 완료: %d개 시군구", len(rows))
 
+    def build_from_transactions(self, start_year: int = 2020) -> int:
+        """apt_trade 실거래가 기반 시군구별 연도별 평균 ㎡당 거래가 산출.
+        공시지가 API 미등록 시 프록시로 사용 — 실시장가 반영으로 ML 피처에 유효."""
+        from datetime import date
+        end_year = date.today().year
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute("""
+                SELECT sggCd,
+                       CAST(dealYear AS INTEGER) as yr,
+                       ROUND(AVG(CAST(dealAmount AS REAL) / NULLIF(CAST(excluUseAr AS REAL), 0)), 0) as avg_p,
+                       COUNT(*) as cnt
+                FROM apt_trade
+                WHERE sggCd IS NOT NULL
+                  AND CAST(excluUseAr AS REAL) > 0
+                  AND dealAmount > 0
+                  AND CAST(dealYear AS INTEGER) BETWEEN ? AND ?
+                GROUP BY sggCd, yr
+            """, (start_year, end_year)).fetchall()
+
+            inserted = 0
+            for sgg_cd, yr, avg_p, cnt in rows:
+                conn.execute("""
+                    INSERT OR REPLACE INTO land_price_sgg_avg
+                    (sgg_cd, base_year, avg_price_m2, sample_count)
+                    VALUES (?,?,?,?)
+                """, (str(sgg_cd), yr, avg_p, cnt))
+                inserted += 1
+
+        log.info("land_price_sgg_avg(거래가 기반) 저장: %d건 (%d년~%d년)", inserted, start_year, end_year)
+        return inserted
+
 
 def _to_int(v) -> Optional[int]:
     try:    return int(str(v).replace(",", ""))
