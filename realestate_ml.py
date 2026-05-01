@@ -775,10 +775,9 @@ class FeatureEngineer:
         else:
             df["시도_인구수"] = np.nan
 
-        # 시군구_학원수: estateAgentSggNm (시군구명) 으로 join
-        if not aca_df.empty and "estateAgentSggNm" in df.columns:
-            # 시군구명 정규화: '강남구' 형태로 맞추기
-            df["_sgg_nm"] = df["estateAgentSggNm"].astype(str).str.strip()
+        # 시군구_학원수: 지역명 (예: "서울특별시 강남구") 마지막 단어로 join
+        if not aca_df.empty and "지역명" in df.columns:
+            df["_sgg_nm"] = df["지역명"].astype(str).str.strip().str.split().str[-1]
             df = df.merge(aca_df.rename(columns={"sgg_nm_raw": "_sgg_nm"}),
                           on="_sgg_nm", how="left")
             df.drop(columns=["_sgg_nm"], errors="ignore", inplace=True)
@@ -1722,7 +1721,7 @@ if __name__ == "__main__":
         X, y = X[valid].reset_index(drop=True), y[valid].reset_index(drop=True)
         df_valid = df[valid].reset_index(drop=True)
 
-        wfv = WalkForwardValidator(min_train_years=3)
+        wfv = WalkForwardValidator(min_train_years=1)
         report = wfv.validate(df_valid, X, y, "거래년도")
         WalkForwardValidator.print_report(report, "매매")
 
