@@ -81,11 +81,12 @@ def get_db_conn():
 
 # ── 상수 ─────────────────────────────────────────────────────
 DB_PATH               = os.getenv("REALESTATE_DB", "realestate.db")
-PIPELINE_PATH         = "pipeline.pkl"
-PIPELINE_TRADE_PATH   = "pipeline_trade.pkl"
-PIPELINE_JEONSE_PATH  = "pipeline_jeonse.pkl"
-PIPELINE_WOLSE_PATH   = "pipeline_wolse.pkl"
-UNDERVALUED_PATH      = "undervalued_full.csv"
+_MODEL_DIR            = os.path.expanduser(os.getenv("MODEL_DIR", "~/realestate_models"))
+PIPELINE_PATH         = os.path.join(_MODEL_DIR, "pipeline.pkl")
+PIPELINE_TRADE_PATH   = os.path.join(_MODEL_DIR, "pipeline_trade.pkl")
+PIPELINE_JEONSE_PATH  = os.path.join(_MODEL_DIR, "pipeline_jeonse.pkl")
+PIPELINE_WOLSE_PATH   = os.path.join(_MODEL_DIR, "pipeline_wolse.pkl")
+UNDERVALUED_PATH      = os.path.join(_MODEL_DIR, "undervalued_full.csv")
 CURRENT_YEAR          = 2026
 
 BRAND_MAP = {
@@ -354,7 +355,7 @@ def _fetch_rates() -> dict:
     return rates
 
 
-@app.on_event("startup")
+@app.on_event("startup")  # type: ignore[attr-defined]
 async def startup_event() -> None:
     global _pipeline, _pipeline_trade, _pipeline_jeonse, _pipeline_wolse, _undervalued, _rates
 
@@ -394,14 +395,14 @@ async def startup_event() -> None:
 # ── Pydantic 스키마 ───────────────────────────────────────────
 
 class PredictRequest(BaseModel):
-    apt_nm:        str            = Field(..., example="래미안블레스티지", description="아파트명")
-    exclu_use_ar:  float          = Field(..., example=113.7,            description="전용면적 (㎡)")
-    floor:         int            = Field(..., example=33,               description="층")
-    sgg_cd:        str            = Field(..., example="11680",          description="시군구 코드")
-    build_year:    int            = Field(..., example=2019,             description="건축연도")
-    deal_type:     str            = Field("매매", example="매매",        description="거래유형 (매매/전세/월세)")
-    deposit:       Optional[float]= Field(None,  example=5000.0,        description="보증금 만원 — 월세 예측 시 필수")
-    property_type: int            = Field(0,     example=0,             description="물건유형 (0=아파트,1=연립다세대,2=오피스텔,3=단독다가구)")
+    apt_nm:        str            = Field(..., examples=["래미안블레스티지"], description="아파트명")
+    exclu_use_ar:  float          = Field(..., examples=[113.7],          description="전용면적 (㎡)")
+    floor:         int            = Field(..., examples=[33],             description="층")
+    sgg_cd:        str            = Field(..., examples=["11680"],        description="시군구 코드")
+    build_year:    int            = Field(..., examples=[2019],           description="건축연도")
+    deal_type:     str            = Field("매매", examples=["매매"],      description="거래유형 (매매/전세/월세)")
+    deposit:       Optional[float]= Field(None,  examples=[5000.0],      description="보증금 만원 — 월세 예측 시 필수")
+    property_type: int            = Field(0,     examples=[0],           description="물건유형 (0=아파트,1=연립다세대,2=오피스텔,3=단독다가구)")
 
 
 class PredictResponse(BaseModel):
@@ -701,10 +702,10 @@ def predict(request: Request, req: PredictRequest, _auth: bool = Depends(optiona
 @cache("undervalued", ttl=1800)
 def undervalued(
     request:       Request,
-    region:        Optional[str]   = Query(None, example="11680",  description="시군구 코드 또는 시도 앞 2자리 (생략 시 전국)"),
-    deal_type:     Optional[str]   = Query(None, example="매매",   description="거래유형 필터 (매매/전세/월세)"),
-    property_type: Optional[str]   = Query(None, example="아파트", description="물건유형 필터 (아파트/연립다세대)"),
-    max_gap:       Optional[float] = Query(None, example=-10,      description="괴리율 상한 (예: -10 → -10% 이하만)"),
+    region:        Optional[str]   = Query(None, examples=["11680"],  description="시군구 코드 또는 시도 앞 2자리 (생략 시 전국)"),
+    deal_type:     Optional[str]   = Query(None, examples=["매매"],   description="거래유형 필터 (매매/전세/월세)"),
+    property_type: Optional[str]   = Query(None, examples=["아파트"], description="물건유형 필터 (아파트/연립다세대)"),
+    max_gap:       Optional[float] = Query(None, examples=[-10],      description="괴리율 상한 (예: -10 → -10% 이하만)"),
     limit:         int             = Query(20,   ge=1, le=200,     description="반환 건수"),
     _auth:         bool            = Depends(optional_auth),
 ) -> List[UndervaluedItem]:
@@ -779,9 +780,9 @@ def undervalued(
 @limiter.limit("60/minute")
 def trend(
     request:      Request,
-    apt_nm:       str            = Query(...,  example="래미안블레스티지", description="아파트명 (부분 일치)"),
-    exclu_use_ar: Optional[float]= Query(None, example=113.7,            description="전용면적 ±5㎡ 필터 (생략 시 전체)"),
-    months:       int            = Query(12,   ge=1, le=36,              description="조회 개월 수"),
+    apt_nm:       str            = Query(...,  examples=["래미안블레스티지"], description="아파트명 (부분 일치)"),
+    exclu_use_ar: Optional[float]= Query(None, examples=[113.7],           description="전용면적 ±5㎡ 필터 (생략 시 전체)"),
+    months:       int            = Query(12,   ge=1, le=36,               description="조회 개월 수"),
     _auth:        bool           = Depends(optional_auth),
 ) -> TrendResponse:
     """
@@ -860,8 +861,8 @@ def trend(
 @limiter.limit("60/minute")
 def rent_trend(
     request:      Request,
-    apt_nm:       str            = Query(...,  example="래미안블레스티지", description="아파트명 (부분 일치)"),
-    exclu_use_ar: Optional[float]= Query(None, example=113.7,            description="전용면적 ±5㎡ 필터"),
+    apt_nm:       str            = Query(...,  examples=["래미안블레스티지"], description="아파트명 (부분 일치)"),
+    exclu_use_ar: Optional[float]= Query(None, examples=[113.7],           description="전용면적 ±5㎡ 필터"),
     months:       int            = Query(12,   ge=1, le=36,              description="조회 개월 수"),
     _auth:        bool           = Depends(optional_auth),
 ) -> RentTrendResponse:

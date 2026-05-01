@@ -39,6 +39,10 @@ def _load_dotenv():
 
 _load_dotenv()
 
+# iCloud Desktop 외부에 모델 저장 (eviction 방지)
+MODEL_DIR = os.path.expanduser(os.getenv("MODEL_DIR", "~/realestate_models"))
+os.makedirs(MODEL_DIR, exist_ok=True)
+
 
 # ============================================================
 # SECTION 1. 상수 정의
@@ -1472,8 +1476,8 @@ def run_trade_pipeline(loader: DBLoader, fe: FeatureEngineer,
     print("\n[Step 7] 모델 저장")
     result_df = save_undervalued_full(df_aligned, model, X, pred=all_preds,
                                       path="_skip", deal_type="매매")
-    save_pipeline(model, medians, available, path="pipeline_trade.pkl")
-    save_pipeline(model, medians, available, path="pipeline.pkl")  # 하위호환
+    save_pipeline(model, medians, available, path=os.path.join(MODEL_DIR, "pipeline_trade.pkl"))
+    save_pipeline(model, medians, available, path=os.path.join(MODEL_DIR, "pipeline.pkl"))
 
     print(f"  MAE: {metrics['mae']:,.0f}만원  R²: {metrics['r2']:.4f}")
     return result_df
@@ -1530,7 +1534,7 @@ def run_jeonse_pipeline(loader: DBLoader, fe: FeatureEngineer,
     all_preds = model.predict(X)
     result_df = save_undervalued_full(df_aligned, model, X, pred=all_preds,
                                       path="_skip", deal_type="전세")
-    save_pipeline(model, medians, available, path="pipeline_jeonse.pkl")
+    save_pipeline(model, medians, available, path=os.path.join(MODEL_DIR, "pipeline_jeonse.pkl"))
 
     print(f"  MAE: {metrics['mae']:,.0f}만원  R²: {metrics['r2']:.4f}")
     return result_df
@@ -1587,7 +1591,7 @@ def run_wolse_pipeline(loader: DBLoader, fe: FeatureEngineer,
     all_preds = model.predict(X)
     result_df = save_undervalued_full(df_aligned, model, X, pred=all_preds,
                                       path="_skip", deal_type="월세")
-    save_pipeline(model, medians, available, path="pipeline_wolse.pkl")
+    save_pipeline(model, medians, available, path=os.path.join(MODEL_DIR, "pipeline_wolse.pkl"))
 
     print(f"  MAE: {metrics['mae']:,.0f}만원  R²: {metrics['r2']:.4f}")
     return result_df
@@ -1651,9 +1655,10 @@ def run_pipeline(db_path: str = "realestate.db",
 
     # ── undervalued_full.csv 통합 ────────────────────────────
     # 부분 실행 시 스킵된 모드의 기존 데이터 보존
+    _uv_path = os.path.join(MODEL_DIR, "undervalued_full.csv")
     skipped = [m for m in ["매매", "전세", "월세"] if m not in modes]
-    if skipped and os.path.exists("undervalued_full.csv"):
-        existing = pd.read_csv("undervalued_full.csv")
+    if skipped and os.path.exists(_uv_path):
+        existing = pd.read_csv(_uv_path)
         if "거래유형" not in existing.columns:
             existing["거래유형"] = "매매"
         if "물건유형" not in existing.columns:
@@ -1666,8 +1671,8 @@ def run_pipeline(db_path: str = "realestate.db",
 
     if results:
         combined = pd.concat(results, ignore_index=True).sort_values("괴리율_%")
-        combined.to_csv("undervalued_full.csv", index=False, encoding="utf-8-sig")
-        print(f"\n  ✓ 통합 저평가 목록: undervalued_full.csv  ({len(combined):,}건)")
+        combined.to_csv(_uv_path, index=False, encoding="utf-8-sig")
+        print(f"\n  ✓ 통합 저평가 목록: {_uv_path}  ({len(combined):,}건)")
         print(f"    거래유형별: {combined['거래유형'].value_counts().to_dict()}")
         print(f"    물건유형별: {combined['물건유형'].value_counts().to_dict()}")
 
