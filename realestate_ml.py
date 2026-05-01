@@ -677,7 +677,7 @@ class FeatureEngineer:
         """매매 데이터 전체 피처 엔지니어링 (apt+villa 통합)"""
         print("\n[1/6] 데이터 정제...")
         df = self.clean_trade(trade_df)
-        df = self.remove_outliers_iqr(df, "dealAmount")
+        df = self.remove_outliers_iqr(df, "거래금액")
         print(f"  정제 후: {len(df):,}건")
         print("[2/6] 기본 피처 생성...")
         df = self.build_brand_feature(df)
