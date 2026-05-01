@@ -656,18 +656,23 @@ class FeatureEngineer:
         global_q3 = df[price_col].quantile(0.75)
         global_iqr = global_q3 - global_q1
 
-        def _mask(grp):
-            if len(grp) < 5:
-                lo, hi = global_q1 - iqr_mult * global_iqr, global_q3 + iqr_mult * global_iqr
-            else:
-                q1, q3 = grp[price_col].quantile(0.25), grp[price_col].quantile(0.75)
-                iqr = q3 - q1
-                lo, hi = q1 - iqr_mult * iqr, q3 + iqr_mult * iqr
-            return grp[grp[price_col].between(lo, hi)]
-
-        df = df.groupby(["단지명", "면적구간"], group_keys=False).apply(_mask)
+        # groupby.transform 사용 — pandas 3.0 include_groups 변경에 영향 없음
+        grp = df.groupby(["단지명", "면적구간"])[price_col]
+        cnt = grp.transform("count")
+        q1  = grp.transform(lambda x: x.quantile(0.25))
+        q3  = grp.transform(lambda x: x.quantile(0.75))
+        iqr = q3 - q1
+        lo  = pd.Series(
+            np.where(cnt >= 5, q1 - iqr_mult * iqr, global_q1 - iqr_mult * global_iqr),
+            index=df.index,
+        )
+        hi  = pd.Series(
+            np.where(cnt >= 5, q3 + iqr_mult * iqr, global_q3 + iqr_mult * global_iqr),
+            index=df.index,
+        )
+        df  = df[df[price_col].between(lo, hi)].reset_index(drop=True)
         print(f"  이상치 제거: {before:,} → {len(df):,}건 (-{before - len(df):,}건)")
-        return df.reset_index(drop=True)
+        return df
 
     def build_all_trade(self, trade_df: pd.DataFrame,
                         rent_df: Optional[pd.DataFrame] = None,
