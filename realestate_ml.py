@@ -59,6 +59,13 @@ PROPERTY_TYPE_MAP = {0: "아파트", 1: "연립다세대", 2: "오피스텔", 3:
 PROPERTY_TYPE_MAP_INV = {v: k for k, v in PROPERTY_TYPE_MAP.items()}
 
 # 매매 모델 피처 (물건유형 포함)
+_MACRO = [
+    "기준금리", "대출금리", "금리변화_3개월", "금리변화_6개월",
+    "M2잔액", "M2증가율_3개월", "가계대출잔액", "경기선행지수",
+    "소비자물가지수", "소비자물가상승률", "소비자심리지수",
+]
+_SGG = ["시도_인구수", "시군구_학원수"]
+
 TRADE_FEATURE_COLS = [
     "전용면적", "평형", "층", "건축연수", "층비율", "브랜드_프리미엄",
     "거래년도", "거래월", "거래분기", "이사시즌여부", "명절직전여부",
@@ -67,11 +74,9 @@ TRADE_FEATURE_COLS = [
     "가격변화율_3개월", "가격변화율_6개월", "단지_거래량_3개월",
     "시군구_직전3개월가", "시군구_직전6개월가",
     "전세가율", "물건유형",
-    "기준금리", "대출금리", "금리변화_3개월", "금리변화_6개월",
-    "M2잔액", "M2증가율_3개월", "가계대출잔액", "경기선행지수",
+    *_MACRO, *_SGG,
 ]
 
-# 전세 모델 피처 (물건유형 포함, 전세가율 없음)
 JEONSE_FEATURE_COLS = [
     "전용면적", "평형", "층", "건축연수", "층비율", "브랜드_프리미엄",
     "거래년도", "거래월", "거래분기", "이사시즌여부", "명절직전여부",
@@ -80,11 +85,9 @@ JEONSE_FEATURE_COLS = [
     "가격변화율_3개월", "가격변화율_6개월", "단지_거래량_3개월",
     "시군구_직전3개월가", "시군구_직전6개월가",
     "물건유형",
-    "기준금리", "대출금리", "금리변화_3개월", "금리변화_6개월",
-    "M2잔액", "M2증가율_3개월", "가계대출잔액", "경기선행지수",
+    *_MACRO, *_SGG,
 ]
 
-# 월세 모델 피처 (보증금·물건유형 포함)
 WOLSE_FEATURE_COLS = [
     "전용면적", "평형", "층", "건축연수", "층비율", "브랜드_프리미엄",
     "거래년도", "거래월", "거래분기", "이사시즌여부", "명절직전여부",
@@ -93,8 +96,7 @@ WOLSE_FEATURE_COLS = [
     "가격변화율_3개월", "가격변화율_6개월", "단지_거래량_3개월",
     "시군구_직전3개월가", "시군구_직전6개월가",
     "보증금", "물건유형",
-    "기준금리", "대출금리", "금리변화_3개월", "금리변화_6개월",
-    "M2잔액", "M2증가율_3개월", "가계대출잔액", "경기선행지수",
+    *_MACRO, *_SGG,
 ]
 
 FEATURE_COLS = TRADE_FEATURE_COLS  # 하위호환
@@ -102,20 +104,60 @@ FEATURE_COLS = TRADE_FEATURE_COLS  # 하위호환
 RATE_COLS = [
     "기준금리", "대출금리", "금리변화_3개월", "금리변화_6개월",
     "M2잔액", "M2증가율_3개월", "가계대출잔액", "경기선행지수",
+    "소비자물가지수", "소비자물가상승률", "소비자심리지수",
 ]
+
+SGG_FEATURE_COLS = ["시도_인구수", "시군구_학원수"]
 
 
 # ============================================================
 # SECTION 1-B. 한국은행 ECOS 거시지표 로더
 # ============================================================
 
-def fetch_macro_rates(start_ym: str = "202201") -> pd.DataFrame:
-    """ECOS API로 기준금리·대출금리·M2·가계대출·경기선행지수 월별 조회.
+def load_macro_from_db(db_path: str = "realestate.db", start_ym: str = "202201") -> pd.DataFrame:
+    """ecos_macro 테이블에서 거시지표 로드 (API 없이 사용 가능)."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            df = pd.read_sql(
+                "SELECT * FROM ecos_macro WHERE ym >= ? ORDER BY ym",
+                conn, params=(start_ym,)
+            )
+        if df.empty:
+            return pd.DataFrame()
+        rename = {
+            "base_rate":               "기준금리",
+            "mortgage_rate":           "대출금리",
+            "m2_trillion":             "M2잔액",
+            "m2_growth_3m":            "M2증가율_3개월",
+            "leading_index":           "경기선행지수",
+            "household_loan_trillion": "가계대출잔액",
+            "rate_chg_3m":             "금리변화_3개월",
+            "rate_chg_6m":             "금리변화_6개월",
+            "cpi":                     "소비자물가지수",
+            "cpi_growth_12m":          "소비자물가상승률",
+            "ccsi":                    "소비자심리지수",
+        }
+        df = df.rename(columns=rename)
+        loaded = [c for c in RATE_COLS if c in df.columns]
+        print(f"  거시지표 DB 로드: {len(df)}개월 | {loaded}")
+        return df[["ym"] + loaded]
+    except Exception as e:
+        print(f"  [경고] ecos_macro DB 로드 실패: {e}")
+        return pd.DataFrame()
+
+
+def fetch_macro_rates(start_ym: str = "202201", db_path: str = "realestate.db") -> pd.DataFrame:
+    """거시지표 로드: ecos_macro DB 우선 → ECOS API fallback.
 
     Returns:
         ym | 기준금리 | 대출금리 | 금리변화_3개월 | 금리변화_6개월
            | M2잔액 | M2증가율_3개월 | 가계대출잔액 | 경기선행지수
+           | 소비자물가지수 | 소비자물가상승률 | 소비자심리지수
     """
+    db_df = load_macro_from_db(db_path, start_ym)
+    if not db_df.empty:
+        return db_df
+
     api_key = os.getenv("ECOS_API_KEY", "")
     if not api_key:
         print("  [경고] ECOS_API_KEY 없음 — 거시지표 피처 NaN으로 채움")
@@ -395,6 +437,34 @@ class DBLoader:
         print(f"  house_rent 로드: {len(df):,}건")
         return df
 
+    def load_sgg_features(self) -> pd.DataFrame:
+        """시도 인구수(kosis_population) + 시군구 학원수(academy_info) 로드.
+
+        Returns DataFrame with columns:
+            sido_cd (2자리) | 시도_인구수
+            sgg_nm          | 시군구_학원수
+        """
+        with self._conn() as conn:
+            # 시도 인구수 — 최신 연도
+            pop = pd.read_sql("""
+                SELECT sgg_cd AS sido_cd, population AS 시도_인구수
+                FROM kosis_population
+                WHERE year = (SELECT MAX(year) FROM kosis_population)
+                  AND LENGTH(sgg_cd) = 2
+                  AND sgg_cd != '00'
+            """, conn)
+
+            # 시군구 학원 수 — sgg_nm(시군구명) 기준 집계
+            aca = pd.read_sql("""
+                SELECT sgg_nm AS sgg_nm_raw, COUNT(*) AS 시군구_학원수
+                FROM academy_info
+                WHERE sgg_nm IS NOT NULL AND sgg_nm != ''
+                  AND status = '개원'
+                GROUP BY sgg_nm
+            """, conn)
+
+        return pop, aca
+
 
 # ============================================================
 # SECTION 3. 피처 엔지니어링
@@ -579,62 +649,74 @@ class FeatureEngineer:
 
     def build_all_trade(self, trade_df: pd.DataFrame,
                         rent_df: Optional[pd.DataFrame] = None,
-                        rates_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+                        rates_df: Optional[pd.DataFrame] = None,
+                        pop_df: Optional[pd.DataFrame] = None,
+                        aca_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         """매매 데이터 전체 피처 엔지니어링 (apt+villa 통합)"""
-        print("\n[1/5] 데이터 정제...")
+        print("\n[1/6] 데이터 정제...")
         df = self.clean_trade(trade_df)
         print(f"  정제 후: {len(df):,}건")
-        print("[2/5] 기본 피처 생성...")
+        print("[2/6] 기본 피처 생성...")
         df = self.build_brand_feature(df)
         df = self.build_max_floor(df)
-        print("[3/5] Rolling 가격 피처 생성...")
+        print("[3/6] Rolling 가격 피처 생성...")
         df = self.build_apt_rolling(df)
         df = self.build_sgg_rolling(df)
-        print("[4/5] 전세가율 계산...")
+        print("[4/6] 전세가율 계산...")
         if rent_df is not None and not rent_df.empty:
             df = self.build_rent_ratio(df, rent_df)
         else:
             df["전세가율"] = np.nan
-        print("[5/5] 금리 피처 병합...")
+        print("[5/6] 금리 피처 병합...")
         df = self.build_rate_feature(df, rates_df)
+        print("[6/6] 시도·시군구 외부 피처 병합...")
+        df = self.build_sgg_external(df, pop_df or pd.DataFrame(), aca_df or pd.DataFrame())
         print("  피처 엔지니어링 완료.")
         return df
 
     def build_all_jeonse(self, rent_df: pd.DataFrame,
-                         rates_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+                         rates_df: Optional[pd.DataFrame] = None,
+                         pop_df: Optional[pd.DataFrame] = None,
+                         aca_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         """전세 데이터 전체 피처 엔지니어링"""
-        print("\n[1/5] 데이터 정제...")
+        print("\n[1/6] 데이터 정제...")
         df = self.clean_rent(rent_df)
         df = df[df["월세"] == 0].copy()
         print(f"  정제 후 전세: {len(df):,}건")
-        print("[2/5] 기본 피처 생성...")
+        print("[2/6] 기본 피처 생성...")
         df = self.build_brand_feature(df)
         df = self.build_max_floor(df)
-        print("[3/5] Rolling 보증금 피처 생성...")
+        print("[3/6] Rolling 보증금 피처 생성...")
         df = self.build_apt_rolling(df)
         df = self.build_sgg_rolling(df)
-        print("[4/5] 금리 피처 병합...")
+        print("[4/6] 금리 피처 병합...")
         df = self.build_rate_feature(df, rates_df)
-        print("[5/5] 피처 엔지니어링 완료.")
+        print("[5/6] 시도·시군구 외부 피처 병합...")
+        df = self.build_sgg_external(df, pop_df or pd.DataFrame(), aca_df or pd.DataFrame())
+        print("[6/6] 피처 엔지니어링 완료.")
         return df
 
     def build_all_wolse(self, rent_df: pd.DataFrame,
-                        rates_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+                        rates_df: Optional[pd.DataFrame] = None,
+                        pop_df: Optional[pd.DataFrame] = None,
+                        aca_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         """월세 데이터 전체 피처 엔지니어링"""
-        print("\n[1/5] 데이터 정제...")
+        print("\n[1/6] 데이터 정제...")
         df = self.clean_rent(rent_df)
         df = df[df["월세"] > 0].copy()
-        df["거래금액"] = df["월세"]  # rolling은 월세 기준
+        df["거래금액"] = df["월세"]
         print(f"  정제 후 월세: {len(df):,}건")
-        print("[2/5] 기본 피처 생성...")
+        print("[2/6] 기본 피처 생성...")
         df = self.build_brand_feature(df)
         df = self.build_max_floor(df)
-        print("[3/5] Rolling 월세 피처 생성...")
+        print("[3/6] Rolling 월세 피처 생성...")
         df = self.build_apt_rolling(df)
         df = self.build_sgg_rolling(df)
-        print("[4/5] 금리 피처 병합...")
+        print("[4/6] 금리 피처 병합...")
         df = self.build_rate_feature(df, rates_df)
-        print("[5/5] 피처 엔지니어링 완료.")
+        print("[5/6] 시도·시군구 외부 피처 병합...")
+        df = self.build_sgg_external(df, pop_df or pd.DataFrame(), aca_df or pd.DataFrame())
+        print("[6/6] 피처 엔지니어링 완료.")
         return df
 
     def build_rate_feature(self, df: pd.DataFrame,
@@ -646,6 +728,36 @@ class FeatureEngineer:
             return df
         rate_cols = ["ym"] + [c for c in RATE_COLS if c in rates_df.columns]
         return df.merge(rates_df[rate_cols], on="ym", how="left")
+
+    def build_sgg_external(self, df: pd.DataFrame,
+                           pop_df: pd.DataFrame,
+                           aca_df: pd.DataFrame) -> pd.DataFrame:
+        """시도 인구수·시군구 학원수 병합.
+
+        - pop_df: sido_cd(2자리) | 시도_인구수
+        - aca_df: sgg_nm_raw | 시군구_학원수
+        """
+        # 시도_인구수: sggCd 앞 2자리로 join
+        if not pop_df.empty:
+            df["_sido_cd"] = df["sggCd"].astype(str).str[:2]
+            df = df.merge(pop_df, left_on="_sido_cd", right_on="sido_cd", how="left")
+            df.drop(columns=["_sido_cd", "sido_cd"], errors="ignore", inplace=True)
+        else:
+            df["시도_인구수"] = np.nan
+
+        # 시군구_학원수: estateAgentSggNm (시군구명) 으로 join
+        if not aca_df.empty and "estateAgentSggNm" in df.columns:
+            # 시군구명 정규화: '강남구' 형태로 맞추기
+            df["_sgg_nm"] = df["estateAgentSggNm"].astype(str).str.strip()
+            df = df.merge(aca_df.rename(columns={"sgg_nm_raw": "_sgg_nm"}),
+                          on="_sgg_nm", how="left")
+            df.drop(columns=["_sgg_nm"], errors="ignore", inplace=True)
+        else:
+            df["시군구_학원수"] = np.nan
+
+        print(f"  시도_인구수 커버리지: {df['시도_인구수'].notna().sum():,}/{len(df):,}건")
+        print(f"  시군구_학원수 커버리지: {df['시군구_학원수'].notna().sum():,}/{len(df):,}건")
+        return df
 
     # ── 구버전 호환 ──
     def build_all(self, trade_df, rent_df=None):
@@ -998,7 +1110,9 @@ def _print_importance(model: RealEstatePriceModel) -> None:
 def run_trade_pipeline(loader: DBLoader, fe: FeatureEngineer,
                        sample_n: int = None,
                        start_ym: str = "202301",
-                       rates_df: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
+                       rates_df: Optional[pd.DataFrame] = None,
+                       pop_df: Optional[pd.DataFrame] = None,
+                       aca_df: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
     print("\n" + "="*60)
     print("  [매매 모델] 아파트 + 연립다세대 + 오피스텔 + 단독다가구 매매가 예측")
     print("="*60)
@@ -1029,7 +1143,7 @@ def run_trade_pipeline(loader: DBLoader, fe: FeatureEngineer,
 
     # ── 피처 엔지니어링 ─────────────────────────────────────
     print("\n[Step 2] 피처 엔지니어링")
-    df = fe.build_all_trade(trade_df, rent_df, rates_df)
+    df = fe.build_all_trade(trade_df, rent_df, rates_df, pop_df, aca_df)
 
     # ── 학습 데이터 준비 ─────────────────────────────────────
     print("\n[Step 3] 학습 데이터 준비")
@@ -1083,7 +1197,9 @@ def run_trade_pipeline(loader: DBLoader, fe: FeatureEngineer,
 
 def run_jeonse_pipeline(loader: DBLoader, fe: FeatureEngineer,
                         sample_n: int = None,
-                        rates_df: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
+                        rates_df: Optional[pd.DataFrame] = None,
+                        pop_df: Optional[pd.DataFrame] = None,
+                        aca_df: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
     print("\n" + "="*60)
     print("  [전세 모델] 아파트 + 연립다세대 + 오피스텔 + 단독다가구 전세 보증금 예측")
     print("="*60)
@@ -1108,7 +1224,7 @@ def run_jeonse_pipeline(loader: DBLoader, fe: FeatureEngineer,
     rent_df = pd.concat(parts, ignore_index=True)
 
     print("\n[Step 2] 피처 엔지니어링")
-    df = fe.build_all_jeonse(rent_df, rates_df)
+    df = fe.build_all_jeonse(rent_df, rates_df, pop_df, aca_df)
 
     print("\n[Step 3] 학습 데이터 준비")
     X, medians, available = _prepare_X(df, JEONSE_FEATURE_COLS)
@@ -1138,7 +1254,9 @@ def run_jeonse_pipeline(loader: DBLoader, fe: FeatureEngineer,
 
 def run_wolse_pipeline(loader: DBLoader, fe: FeatureEngineer,
                        sample_n: int = None,
-                       rates_df: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
+                       rates_df: Optional[pd.DataFrame] = None,
+                       pop_df: Optional[pd.DataFrame] = None,
+                       aca_df: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
     print("\n" + "="*60)
     print("  [월세 모델] 아파트 + 연립다세대 + 오피스텔 + 단독다가구 월세 예측")
     print("="*60)
@@ -1163,7 +1281,7 @@ def run_wolse_pipeline(loader: DBLoader, fe: FeatureEngineer,
     rent_df = pd.concat(parts, ignore_index=True)
 
     print("\n[Step 2] 피처 엔지니어링")
-    df = fe.build_all_wolse(rent_df, rates_df)
+    df = fe.build_all_wolse(rent_df, rates_df, pop_df, aca_df)
 
     print("\n[Step 3] 학습 데이터 준비")
     X, medians, available = _prepare_X(df, WOLSE_FEATURE_COLS)
@@ -1209,7 +1327,7 @@ def run_pipeline(db_path: str = "realestate.db",
         modes:    실행할 모델 ("매매", "전세", "월세")
     """
     print("=" * 60)
-    print("  부동산 ML 파이프라인 v3")
+    print("  부동산 ML 파이프라인 v5")
     print(f"  실행 모드: {', '.join(modes)}")
     print("=" * 60)
 
@@ -1219,23 +1337,31 @@ def run_pipeline(db_path: str = "realestate.db",
 
     fe = FeatureEngineer()
 
-    print("\n[Step 1-B] 금리 데이터 로드 (한국은행 ECOS)")
-    rates_df = fetch_macro_rates(start_ym="202201")
+    print("\n[Step 1-B] 거시지표 로드 (ecos_macro DB → ECOS API fallback)")
+    rates_df = fetch_macro_rates(start_ym="202201", db_path=db_path)
+
+    print("\n[Step 1-C] 시도·시군구 외부 피처 로드")
+    try:
+        pop_df, aca_df = loader.load_sgg_features()
+        print(f"  시도 인구: {len(pop_df)}개 시도 | 학원: {aca_df['시군구_학원수'].sum():,.0f}개소 ({len(aca_df)}개 시군구)")
+    except Exception as e:
+        print(f"  [경고] 외부 피처 로드 실패: {e}")
+        pop_df, aca_df = pd.DataFrame(), pd.DataFrame()
 
     results = []
 
     if "매매" in modes:
-        r = run_trade_pipeline(loader, fe, sample_n, start_ym, rates_df)
+        r = run_trade_pipeline(loader, fe, sample_n, start_ym, rates_df, pop_df, aca_df)
         if r is not None:
             results.append(r)
 
     if "전세" in modes:
-        r = run_jeonse_pipeline(loader, fe, sample_n, rates_df)
+        r = run_jeonse_pipeline(loader, fe, sample_n, rates_df, pop_df, aca_df)
         if r is not None:
             results.append(r)
 
     if "월세" in modes:
-        r = run_wolse_pipeline(loader, fe, sample_n, rates_df)
+        r = run_wolse_pipeline(loader, fe, sample_n, rates_df, pop_df, aca_df)
         if r is not None:
             results.append(r)
 

@@ -153,12 +153,28 @@ class CommercialDistrictCollector:
                 ORDER BY grid_lat, grid_lng
             """).fetchall()
 
+        # 이미 수집된 격자 체크포인트 (grid_lat, grid_lng 기준)
+        with sqlite3.connect(self.db_path) as conn:
+            done_grids = {
+                (round(r[0], 6), round(r[1], 6))
+                for r in conn.execute("""
+                    SELECT DISTINCT
+                        ROUND(lat / 0.009) * 0.009,
+                        ROUND(lon / 0.011) * 0.011
+                    FROM commercial_district
+                    WHERE lat IS NOT NULL AND lon IS NOT NULL
+                """).fetchall()
+            }
+        remaining = [(cy, cx) for cy, cx in apts if (round(cy, 6), round(cx, 6)) not in done_grids]
+        if done_grids:
+            log.info("상가 체크포인트: %d/%d 격자 완료, %d개 재개", len(done_grids), len(apts), len(remaining))
+
         total = 0
-        for i, (cy, cx) in enumerate(apts, 1):
+        for i, (cy, cx) in enumerate(remaining, 1):
             n = self.collect_around_point(cx, cy, radius)
             total += n
-            if i % 100 == 0:
-                log.info("상가수집 진행: %d/%d 격자 (누적 %d건)", i, len(apts), total)
+            if i % 50 == 0:
+                log.info("상가수집 진행: %d/%d 격자 (누적 %d건)", i, len(remaining), total)
             time.sleep(1.5)  # 429 방지: 초당 0.67건 이하
 
         log.info("상가정보 수집 완료: %d건", total)
