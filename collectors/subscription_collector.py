@@ -129,10 +129,8 @@ class SubscriptionCollector:
         return inserted
 
     def collect_results(self, start_ym: str = "202301") -> int:
-        start_date = start_ym + "01"
-        rows = self._get(RESULT_URL, {
-            "cond[RCRIT_PBLANC_DE::GTE]": start_date,
-        })
+        # Ranking API는 날짜 cond 파라미터 미지원 → 조건 없이 전체 요청
+        rows = self._get(RESULT_URL, {})
         inserted = 0
         with sqlite3.connect(self.db_path) as conn:
             for r in rows:

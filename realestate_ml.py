@@ -68,7 +68,7 @@ _MACRO = [
     "M2잔액", "M2증가율_3개월", "가계대출잔액", "경기선행지수",
     "소비자물가지수", "소비자물가상승률", "소비자심리지수",
 ]
-_SGG = ["시도_인구수", "시군구_학원수"]
+_SGG = ["시도_인구수", "시군구_학원수", "시군구_상가수"]
 _LOCATION = ["지하철_거리", "초등학교_반경수", "편의시설_반경수", "시군구_m2당가격"]
 
 TRADE_FEATURE_COLS = [
@@ -470,6 +470,22 @@ class DBLoader:
 
         return pop, aca
 
+    def load_commercial_features(self) -> pd.DataFrame:
+        """commercial_district에서 시군구별 상가 수 로드.
+        Returns: sgg_cd(5자리) | 시군구_상가수
+        """
+        if not self._table_exists("commercial_district"):
+            return pd.DataFrame()
+        with self._conn() as conn:
+            df = pd.read_sql("""
+                SELECT signguCd AS sgg_cd, COUNT(*) AS 시군구_상가수
+                FROM commercial_district
+                WHERE signguCd IS NOT NULL AND signguCd != ''
+                GROUP BY signguCd
+            """, conn)
+        print(f"  commercial_district 상가수 로드: {len(df):,}개 시군구, 총 {df['시군구_상가수'].sum():,}개소")
+        return df
+
     def load_kakao_features(self) -> pd.DataFrame:
         """kakao_poi에서 단지별 입지 피처 로드.
         Returns: apt_nm | sgg_cd | 지하철_거리 | 초등학교_반경수 | 편의시설_반경수
@@ -718,7 +734,8 @@ class FeatureEngineer:
                         pop_df: Optional[pd.DataFrame] = None,
                         aca_df: Optional[pd.DataFrame] = None,
                         kakao_df: Optional[pd.DataFrame] = None,
-                        lp_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+                        lp_df: Optional[pd.DataFrame] = None,
+                        cd_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         """매매 데이터 전체 피처 엔지니어링 (apt+villa 통합)"""
         print("\n[1/8] 데이터 정제...")
         df = self.clean_trade(trade_df)
@@ -738,7 +755,7 @@ class FeatureEngineer:
         print("[5/8] 금리 피처 병합...")
         df = self.build_rate_feature(df, rates_df)
         print("[6/8] 시도·시군구 외부 피처 병합...")
-        df = self.build_sgg_external(df, pop_df if pop_df is not None else pd.DataFrame(), aca_df if aca_df is not None else pd.DataFrame())
+        df = self.build_sgg_external(df, pop_df if pop_df is not None else pd.DataFrame(), aca_df if aca_df is not None else pd.DataFrame(), cd_df)
         print("[7/8] kakao 입지 피처 병합...")
         df = self.build_kakao_features(df, kakao_df)
         print("[8/8] 시군구 ㎡당가격 병합...")
@@ -751,7 +768,8 @@ class FeatureEngineer:
                          pop_df: Optional[pd.DataFrame] = None,
                          aca_df: Optional[pd.DataFrame] = None,
                          kakao_df: Optional[pd.DataFrame] = None,
-                         lp_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+                         lp_df: Optional[pd.DataFrame] = None,
+                         cd_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         """전세 데이터 전체 피처 엔지니어링"""
         print("\n[1/8] 데이터 정제...")
         df = self.clean_rent(rent_df)
@@ -767,7 +785,7 @@ class FeatureEngineer:
         print("[4/8] 금리 피처 병합...")
         df = self.build_rate_feature(df, rates_df)
         print("[5/8] 시도·시군구 외부 피처 병합...")
-        df = self.build_sgg_external(df, pop_df if pop_df is not None else pd.DataFrame(), aca_df if aca_df is not None else pd.DataFrame())
+        df = self.build_sgg_external(df, pop_df if pop_df is not None else pd.DataFrame(), aca_df if aca_df is not None else pd.DataFrame(), cd_df)
         print("[6/8] kakao 입지 피처 병합...")
         df = self.build_kakao_features(df, kakao_df)
         print("[7/8] 시군구 ㎡당가격 병합...")
@@ -780,7 +798,8 @@ class FeatureEngineer:
                         pop_df: Optional[pd.DataFrame] = None,
                         aca_df: Optional[pd.DataFrame] = None,
                         kakao_df: Optional[pd.DataFrame] = None,
-                        lp_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+                        lp_df: Optional[pd.DataFrame] = None,
+                        cd_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         """월세 데이터 전체 피처 엔지니어링"""
         print("\n[1/8] 데이터 정제...")
         df = self.clean_rent(rent_df)
@@ -797,7 +816,7 @@ class FeatureEngineer:
         print("[4/8] 금리 피처 병합...")
         df = self.build_rate_feature(df, rates_df)
         print("[5/8] 시도·시군구 외부 피처 병합...")
-        df = self.build_sgg_external(df, pop_df if pop_df is not None else pd.DataFrame(), aca_df if aca_df is not None else pd.DataFrame())
+        df = self.build_sgg_external(df, pop_df if pop_df is not None else pd.DataFrame(), aca_df if aca_df is not None else pd.DataFrame(), cd_df)
         print("[6/8] kakao 입지 피처 병합...")
         df = self.build_kakao_features(df, kakao_df)
         print("[7/8] 시군구 ㎡당가격 병합...")
@@ -877,11 +896,13 @@ class FeatureEngineer:
 
     def build_sgg_external(self, df: pd.DataFrame,
                            pop_df: pd.DataFrame,
-                           aca_df: pd.DataFrame) -> pd.DataFrame:
-        """시도 인구수·시군구 학원수 병합.
+                           aca_df: pd.DataFrame,
+                           cd_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+        """시도 인구수·시군구 학원수·시군구 상가수 병합.
 
         - pop_df: sido_cd(2자리) | 시도_인구수
         - aca_df: sgg_nm_raw | 시군구_학원수
+        - cd_df:  sgg_cd(5자리) | 시군구_상가수
         """
         # 시도_인구수: sggCd 앞 2자리로 join
         if not pop_df.empty:
@@ -899,6 +920,17 @@ class FeatureEngineer:
             df.drop(columns=["_sgg_nm"], errors="ignore", inplace=True)
         else:
             df["시군구_학원수"] = np.nan
+
+        # 시군구_상가수: sggCd(5자리) 기준으로 join
+        if cd_df is not None and not cd_df.empty:
+            df["_sgg5"] = df["sggCd"].astype(str)
+            df = df.merge(cd_df.rename(columns={"sgg_cd": "_sgg5"}),
+                          on="_sgg5", how="left")
+            df.drop(columns=["_sgg5"], errors="ignore", inplace=True)
+            cov = df["시군구_상가수"].notna().sum()
+            print(f"  시군구_상가수 커버리지: {cov:,}/{len(df):,}건 ({100*cov/len(df):.1f}%)")
+        else:
+            df["시군구_상가수"] = np.nan
 
         print(f"  시도_인구수 커버리지: {df['시도_인구수'].notna().sum():,}/{len(df):,}건")
         print(f"  시군구_학원수 커버리지: {df['시군구_학원수'].notna().sum():,}/{len(df):,}건")
@@ -1535,7 +1567,8 @@ def run_trade_pipeline(loader: DBLoader, fe: FeatureEngineer,
                        pop_df: Optional[pd.DataFrame] = None,
                        aca_df: Optional[pd.DataFrame] = None,
                        kakao_df: Optional[pd.DataFrame] = None,
-                       lp_df: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
+                       lp_df: Optional[pd.DataFrame] = None,
+                       cd_df: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
     print("\n" + "="*60)
     print("  [매매 모델] 아파트 + 연립다세대 + 오피스텔 + 단독다가구 매매가 예측")
     print("="*60)
@@ -1566,7 +1599,7 @@ def run_trade_pipeline(loader: DBLoader, fe: FeatureEngineer,
 
     # ── 피처 엔지니어링 ─────────────────────────────────────
     print("\n[Step 2] 피처 엔지니어링")
-    df = fe.build_all_trade(trade_df, rent_df, rates_df, pop_df, aca_df, kakao_df, lp_df)
+    df = fe.build_all_trade(trade_df, rent_df, rates_df, pop_df, aca_df, kakao_df, lp_df, cd_df)
 
     # ── 학습 데이터 준비 ─────────────────────────────────────
     print("\n[Step 3] 학습 데이터 준비")
@@ -1624,7 +1657,8 @@ def run_jeonse_pipeline(loader: DBLoader, fe: FeatureEngineer,
                         pop_df: Optional[pd.DataFrame] = None,
                         aca_df: Optional[pd.DataFrame] = None,
                         kakao_df: Optional[pd.DataFrame] = None,
-                        lp_df: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
+                        lp_df: Optional[pd.DataFrame] = None,
+                        cd_df: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
     print("\n" + "="*60)
     print("  [전세 모델] 아파트 + 연립다세대 + 오피스텔 + 단독다가구 전세 보증금 예측")
     print("="*60)
@@ -1649,7 +1683,7 @@ def run_jeonse_pipeline(loader: DBLoader, fe: FeatureEngineer,
     rent_df = pd.concat(parts, ignore_index=True)
 
     print("\n[Step 2] 피처 엔지니어링")
-    df = fe.build_all_jeonse(rent_df, rates_df, pop_df, aca_df, kakao_df, lp_df)
+    df = fe.build_all_jeonse(rent_df, rates_df, pop_df, aca_df, kakao_df, lp_df, cd_df)
 
     print("\n[Step 3] 학습 데이터 준비")
     X, medians, available = _prepare_X(df, JEONSE_FEATURE_COLS)
@@ -1683,7 +1717,8 @@ def run_wolse_pipeline(loader: DBLoader, fe: FeatureEngineer,
                        pop_df: Optional[pd.DataFrame] = None,
                        aca_df: Optional[pd.DataFrame] = None,
                        kakao_df: Optional[pd.DataFrame] = None,
-                       lp_df: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
+                       lp_df: Optional[pd.DataFrame] = None,
+                       cd_df: Optional[pd.DataFrame] = None) -> Optional[pd.DataFrame]:
     print("\n" + "="*60)
     print("  [월세 모델] 아파트 + 연립다세대 + 오피스텔 + 단독다가구 월세 예측")
     print("="*60)
@@ -1708,7 +1743,7 @@ def run_wolse_pipeline(loader: DBLoader, fe: FeatureEngineer,
     rent_df = pd.concat(parts, ignore_index=True)
 
     print("\n[Step 2] 피처 엔지니어링")
-    df = fe.build_all_wolse(rent_df, rates_df, pop_df, aca_df, kakao_df, lp_df)
+    df = fe.build_all_wolse(rent_df, rates_df, pop_df, aca_df, kakao_df, lp_df, cd_df)
 
     print("\n[Step 3] 학습 데이터 준비")
     X, medians, available = _prepare_X(df, WOLSE_FEATURE_COLS)
@@ -1789,20 +1824,27 @@ def run_pipeline(db_path: str = "realestate.db",
         print(f"  [경고] land_price 피처 로드 실패: {e}")
         lp_df = pd.DataFrame()
 
+    print("\n[Step 1-F] 시군구 상가수 로드")
+    try:
+        cd_df = loader.load_commercial_features()
+    except Exception as e:
+        print(f"  [경고] commercial 피처 로드 실패: {e}")
+        cd_df = pd.DataFrame()
+
     results = []
 
     if "매매" in modes:
-        r = run_trade_pipeline(loader, fe, sample_n, start_ym, rates_df, pop_df, aca_df, kakao_df, lp_df)
+        r = run_trade_pipeline(loader, fe, sample_n, start_ym, rates_df, pop_df, aca_df, kakao_df, lp_df, cd_df)
         if r is not None:
             results.append(r)
 
     if "전세" in modes:
-        r = run_jeonse_pipeline(loader, fe, sample_n, rates_df, pop_df, aca_df, kakao_df, lp_df)
+        r = run_jeonse_pipeline(loader, fe, sample_n, rates_df, pop_df, aca_df, kakao_df, lp_df, cd_df)
         if r is not None:
             results.append(r)
 
     if "월세" in modes:
-        r = run_wolse_pipeline(loader, fe, sample_n, rates_df, pop_df, aca_df, kakao_df, lp_df)
+        r = run_wolse_pipeline(loader, fe, sample_n, rates_df, pop_df, aca_df, kakao_df, lp_df, cd_df)
         if r is not None:
             results.append(r)
 
