@@ -818,11 +818,13 @@ class FeatureEngineer:
 
         kakao_df = kakao_df.copy()
         kakao_df["sgg_cd"] = kakao_df["sgg_cd"].astype(str)
+        # clean_trade/clean_rent 이후 aptNm → 단지명으로 rename됨
+        nm_col = "단지명" if "단지명" in df.columns else "aptNm"
         df["_sgg_cd"] = df["sggCd"].astype(str)
 
         df = df.merge(
             kakao_df[["apt_nm", "sgg_cd"] + cols],
-            left_on=["aptNm", "_sgg_cd"],
+            left_on=[nm_col, "_sgg_cd"],
             right_on=["apt_nm", "sgg_cd"],
             how="left",
         ).drop(columns=["apt_nm", "sgg_cd", "_sgg_cd"], errors="ignore")
@@ -1444,6 +1446,19 @@ def save_undervalued_full(df: pd.DataFrame, model: RealEstatePriceModel,
 
     if "dealingGbn" in result.columns:
         result = result[~result["dealingGbn"].str.contains("직거래", na=False)]
+    # 예측가 비정상값 제거 (음수 또는 1,000만원 미만)
+    result = result[result["예측가_만원"] > 1000]
+    # 거래유형별 최소 실거래가 기준 (노이즈 제거)
+    if deal_type == "매매":
+        result = result[result["실거래가_만원"] >= 3000]
+    elif deal_type == "전세":
+        result = result[result["실거래가_만원"] >= 1000]
+    else:  # 월세
+        result = result[result["실거래가_만원"] >= 10]
+    # 최근 2년 거래만 (신선도 유지)
+    from datetime import date
+    cutoff_year = date.today().year - 1
+    result = result[result["거래년도"].astype(int) >= cutoff_year]
     apt_avg = result.groupby("단지명")["실거래가_만원"].transform("mean")
     result  = result[(result["실거래가_만원"] / apt_avg.replace(0, np.nan)).between(0.5, 2.0)]
     apt_cnt = result.groupby("단지명")["실거래가_만원"].transform("count")
@@ -1457,6 +1472,14 @@ def save_undervalued_full(df: pd.DataFrame, model: RealEstatePriceModel,
     else:
         full["물건유형"] = "아파트"
     full["거래유형"] = deal_type
+
+    # 아파트만: 지역명 존재 + 숫자코드_지역명 패턴 단지 제외
+    if deal_type == "매매":
+        import re as _re
+        full = full[full["물건유형"] == "아파트"]
+        if "지역명" in full.columns:
+            full = full[full["지역명"].notna() & (full["지역명"] != "")]
+        full = full[~full["단지명"].str.match(r"^\d+_", na=False)]
 
     # 지역명 없으면 빈 문자열
     if "지역명" not in full.columns:
